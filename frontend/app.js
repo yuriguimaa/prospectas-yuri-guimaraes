@@ -33,9 +33,22 @@ const STATUSES=[['novo','Novo'],['contatado','Contatado'],['negociando','Negocia
 const statusLabel=v=>(STATUSES.find(s=>s[0]===v)||STATUSES[0])[1];
 let contactPauseUntil=0;
 let searchGeneration=0;
-const categoryNames={saude:'Saúde',advocacia:'Advocacia',engenharia:'Engenharia',contabilidade:'Contabilidade',outra:'Outra'};
+const categoryNames={saude:'Saúde',advocacia:'Advocacia',engenharia:'Engenharia',contabilidade:'Contabilidade',outra:'Outra',cnpj:'Empresa'};
 const cnaes={advocacia:'6911',engenharia:'7112',contabilidade:'6920'};
 for(const uf of Object.keys(UFS).sort()){const o=document.createElement('option');o.value=uf;o.textContent=uf;$('uf').append(o)}
+const cityCache={};let cityIndex={};
+function validCnpj(value){const c=String(value||'').replace(/\D/g,'');if(!/^\d{14}$/.test(c)||/^(\d)\1{13}$/.test(c))return false;const calc=len=>{let sum=0,pos=len-7;for(let i=len;i>=1;i--){sum+=Number(c[len-i])*pos--;if(pos<2)pos=9}const r=sum%11;return r<2?0:11-r};return calc(12)===Number(c[12])&&calc(13)===Number(c[13])}
+function formatCnpj(c){c=String(c||'').replace(/\D/g,'');return c.length===14?c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5'):c}
+function formatPhone(p){const d=String(p||'').replace(/\D/g,'');if(d.length===11)return '('+d.slice(0,2)+') '+d.slice(2,7)+'-'+d.slice(7);if(d.length===10)return '('+d.slice(0,2)+') '+d.slice(2,6)+'-'+d.slice(6);return p}
+async function loadCities(uf){
+  const list=$('city-list');list.replaceChildren();cityIndex={};
+  if(!uf)return;
+  try{
+    if(!cityCache[uf]){const res=await api('/api/municipios?uf='+uf,{headers:{Accept:'application/json'}});if(!res.ok)throw Error();cityCache[uf]=await res.json()}
+    if($('uf').value!==uf)return;
+    for(const c of cityCache[uf]){cityIndex[normalize(c.nome)]=String(c.id);const o=document.createElement('option');o.value=c.nome;list.append(o)}
+  }catch{}
+}
 function normalize(s){return String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
 function first(o,keys){for(const k of keys){const v=o?.[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim()}return ''}
 function setStatus(title,detail,kind='empty'){const s=$('status');s.className='status '+kind;s.replaceChildren();const icon=document.createElement('div');icon.className='status-icon';icon.textContent=kind==='error'?'!':'⌕';const strong=document.createElement('strong');strong.textContent=title;const span=document.createElement('span');span.textContent=detail;s.append(icon,strong,span);s.hidden=false}
@@ -173,12 +186,13 @@ function show(rows){
     const h=document.createElement('h3');h.textContent=r.name||'Sem nome informado';
     const type=document.createElement('span');type.className='lead-type';type.textContent=r.category;
     title.append(h,type);
-    if(r.cnpj){
+    if(r.cnpj&&state.mode==='company'){
       const badge=document.createElement('span');badge.className='lead-verification';
       badge.textContent=r.verified?(r.categoryVerified?'Cadastro confirmado':'Cadastro ativo · atividade por texto'):r.contactPending?'Conferindo cadastro…':'Cadastro a conferir';
       title.append(badge);
     }
-    const place=document.createElement('div');place.className='lead-place';place.textContent=[r.city,r.uf].filter(Boolean).join(' · ')||'Localidade não informada';
+    if(r.situacao&&normalize(r.situacao)!=='ativa'){const warn=document.createElement('span');warn.className='lead-verification lead-warning';warn.textContent='Situação: '+r.situacao;title.append(warn)}
+    const place=document.createElement('div');place.className='lead-place';place.textContent=[r.address,[r.city,r.uf].filter(Boolean).join(' · ')||'Localidade não informada',r.cnpj?'CNPJ '+formatCnpj(r.cnpj):''].filter(Boolean).join(' · ');
     const meta=document.createElement('div');meta.className='lead-meta';
     const phone=document.createElement('span');
     if(r.phone){setLink(phone,'☎ '+r.phone,'tel:'+r.phone.replace(/[^\d+]/g,''))}
@@ -187,11 +201,12 @@ function show(rows){
     if(r.email){setLink(email,'✉ '+r.email,'mailto:'+r.email)}
     else{email.className='missing';email.textContent='E-mail não informado'}
     meta.append(phone,email);
+    for(const extra of (r.phones||[]).filter(x=>x&&x.replace(/\D/g,'')!==String(r.phone||'').replace(/\D/g,'')).slice(0,2)){const sp=document.createElement('span');setLink(sp,'☎ '+formatPhone(extra),'tel:'+extra.replace(/\D/g,''));meta.append(sp)}
     if(r.phone)addWhatsapp(meta,r.phone);
     if(r.site&&safeUrl(r.site)){const site=document.createElement('span');setLink(site,'↗ Site',safeUrl(r.site));meta.append(site)}
     if(r.cnpj&&(!r.contactChecked||!r.phone||!r.email)){
       const btn=document.createElement('button');btn.type='button';btn.className='contact-fetch';
-      btn.textContent=r.contactPending?'Conferindo cadastro…':r.contactChecked?'Sem outros contatos cadastrados':r.contactError||'Conferir cadastro e contatos';
+      btn.textContent=r.contactPending?(r.query?'Conferindo cadastro…':'Buscando contatos…'):r.contactChecked?'Sem outros contatos cadastrados':r.contactError||(r.query?'Conferir cadastro e contatos':'Buscar mais contatos pelo CNPJ');
       btn.disabled=Boolean(r.contactPending||r.contactChecked);
       btn.addEventListener('click',()=>loadContact(r));meta.append(btn);
     }
@@ -212,13 +227,62 @@ function show(rows){
   $('prev-btn').disabled=!['cnes','company'].includes(state.mode)||state.page===0;
   $('next-btn').disabled=!['cnes','company'].includes(state.mode)||!state.hasMore;
 }
-function mapCnes(o){const code=first(o,['codigo_cnes','co_cnes','cnes']);const ufCode=first(o,['codigo_uf']);const uf=first(o,['uf','sigla_uf','estado'])||Object.keys(UFS).find(k=>String(UFS[k])===ufCode)||'';const rawPhone=first(o,['numero_telefone_estabelecimento','numero_telefone','telefone','estabelecimento_telefone','nu_telefone','ddd_telefone']);const rawEmail=first(o,['endereco_email_estabelecimento','endereco_email','email','estabelecimento_email','ds_email']);return {name:first(o,['nome_fantasia','estabelecimento_nome_fantasia','nome_razao_social','razao_social','no_fantasia','nome'])||('Estabelecimento CNES '+code),category:'Saúde',city:first(o,['municipio','nome_municipio','no_municipio','municipio_nome'])||('Município IBGE '+first(o,['codigo_municipio'])),uf,phone:rawPhone.replace(/\D/g,'').length>=8?rawPhone:'',email:/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)?rawEmail:'',site:'',recordKey:code?'cnes:'+code:'',source:'CNES · Ministério da Saúde',sourceUrl:code?'https://cnes.datasus.gov.br/pages/estabelecimentos/consulta.jsp':'https://apidadosabertos.saude.gov.br/'}}
+function mapCnes(o){const code=first(o,['codigo_cnes','co_cnes','cnes']);const ufCode=first(o,['codigo_uf']);const uf=first(o,['uf','sigla_uf','estado'])||Object.keys(UFS).find(k=>String(UFS[k])===ufCode)||'';const rawPhone=first(o,['numero_telefone_estabelecimento','numero_telefone','telefone','estabelecimento_telefone','nu_telefone','ddd_telefone']);const rawEmail=first(o,['endereco_email_estabelecimento','endereco_email','email','estabelecimento_email','ds_email']);const cnpj=first(o,['numero_cnpj','cnpj','numero_cnpj_entidade']).replace(/\D/g,'');const phone=rawPhone.replace(/\D/g,'').length>=8?rawPhone:'';const email=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)?rawEmail:'';const address=[first(o,['endereco_estabelecimento','logradouro']),first(o,['numero_estabelecimento']),first(o,['bairro_estabelecimento'])].filter(Boolean).join(', ');return {name:first(o,['nome_fantasia','estabelecimento_nome_fantasia','nome_razao_social','razao_social','no_fantasia','nome'])||('Estabelecimento CNES '+code),category:'Saúde',city:first(o,['nome_municipio','municipio','no_municipio','municipio_nome'])||('Município IBGE '+first(o,['codigo_municipio'])),uf,address,phone,email,site:'',cnpj:validCnpj(cnpj)?cnpj:'',verified:true,contactChecked:!validCnpj(cnpj)||Boolean(phone&&email),recordKey:code?'cnes:'+code:'',source:'CNES · Ministério da Saúde',sourceUrl:code?'https://cnes.datasus.gov.br/pages/estabelecimentos/consulta.jsp':'https://apidadosabertos.saude.gov.br/'}}
 function extractRows(data){if(Array.isArray(data))return data;for(const k of ['estabelecimentos','resultados','dados','data','results','items','content'])if(Array.isArray(data?.[k]))return data[k];return []}
-async function searchCnes(){const generation=++searchGeneration;const uf=$('uf').value;const p=new URLSearchParams({limit:'20',offset:String(state.page*20)});if(uf)p.set('uf',uf);const url='/api/cnes?'+p;setStatus('Consultando o CNES','Aguarde a resposta da base pública.','loading');$('search-btn').disabled=true;try{const res=await api(url,{headers:{Accept:'application/json'}});if(!res.ok)throw new Error('A fonte respondeu com o código '+res.status);const data=await res.json();if(generation!==searchGeneration)return;state.rows=extractRows(data).map(mapCnes);state.mode='cnes';state.hasMore=state.rows.length===20;show(state.rows)}catch(err){if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('Não foi possível consultar o CNES','A fonte pública pode estar indisponível. Tente novamente mais tarde ou importe um CSV.','error')}finally{if(generation===searchGeneration)$('search-btn').disabled=false}}
+async function searchCnes(){
+  const generation=++searchGeneration;const uf=$('uf').value;const cityName=$('term').value.trim();
+  const p=new URLSearchParams({offset:String(state.page*20)});if(uf)p.set('uf',uf);
+  const tipo=$('cnes-type').value;if(tipo)p.set('tipo',tipo);
+  if(cityName){
+    if(!uf){state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('Escolha o estado','Para filtrar por cidade, selecione primeiro o estado.');$('uf').focus();return}
+    if(!cityCache[uf])await loadCities(uf);
+    const code=cityIndex[normalize(cityName)];
+    if(!code){state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('Cidade não encontrada','Confira o nome da cidade em '+uf+' ou escolha uma das sugestões da lista.');$('term').focus();return}
+    p.set('municipio',code);
+  }
+  setStatus('Consultando o CNES','Aguarde a resposta da base pública.','loading');$('search-btn').disabled=true;
+  try{
+    const res=await api('/api/cnes?'+p,{headers:{Accept:'application/json'}});
+    if(!res.ok)throw new Error(String(res.status));
+    const data=await res.json();if(generation!==searchGeneration)return;
+    state.rows=extractRows(data).map(mapCnes);state.mode='cnes';state.hasMore=state.rows.length===20;show(state.rows);
+    if(!state.rows.length)setStatus('Nenhum estabelecimento encontrado','Tente outro tipo de estabelecimento, outra cidade ou apenas o estado.');
+    else enrichAllRows(state.rows);
+  }catch(err){
+    if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
+    setStatus(err.message==='429'?'Muitas consultas seguidas':'Não foi possível consultar o CNES',err.message==='429'?'Aguarde um minuto e tente novamente.':'A fonte pública pode estar indisponível. Tente novamente mais tarde ou importe um CSV.','error');
+  }finally{if(generation===searchGeneration)$('search-btn').disabled=false}
+}
+async function searchCnpj(){
+  const generation=++searchGeneration;const cnpj=$('cnpj-input').value.replace(/\D/g,'');
+  if(!validCnpj(cnpj)){state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('CNPJ inválido','Confira os 14 números do CNPJ.');$('cnpj-input').focus();return}
+  setStatus('Consultando o CNPJ','Buscando em OpenCNPJ, BrasilAPI e CNPJ.ws.','loading');$('search-btn').disabled=true;
+  try{
+    const res=await api('/api/cnpj?cnpj='+cnpj,{headers:{Accept:'application/json'}});
+    if(!res.ok)throw new Error(String(res.status));
+    const d=await res.json();if(generation!==searchGeneration)return;
+    contactCache.set(cnpj,d);
+    state.rows=[{name:d.name||d.razaoSocial||('Empresa '+formatCnpj(cnpj)),category:d.mainActivity||'Empresa',city:d.city,uf:d.uf,address:d.address,phone:d.phone?formatPhone(d.phone):'',phones:d.phones||[],email:d.email,site:'',cnpj,situacao:d.status,verified:true,contactChecked:true,recordKey:'cnpj:'+cnpj,source:d.source||'Cadastro empresarial',sourceUrl:d.sourceUrl||''}];
+    state.mode='cnpj';state.hasMore=false;show(state.rows);
+  }catch(err){
+    if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
+    const c=err.message;setStatus(c==='404'?'CNPJ não encontrado':c==='429'?'Limite temporário das fontes':'Não foi possível consultar o CNPJ',c==='404'?'Nenhuma das bases públicas tem esse CNPJ.':c==='429'?'Aguarde um minuto e tente novamente.':'As fontes podem estar indisponíveis. Tente novamente em instantes.','error');
+  }finally{if(generation===searchGeneration)$('search-btn').disabled=false}
+}
 function mapCompany(o){const address=o.endereco&&typeof o.endereco==='object'?o.endereco:{};const cnpj=first(o,['cnpj','CNPJ']).replace(/\D/g,'');const phone=first(o,['telefone','telefone1','telefone_1','telefone_principal','ddd_telefone_1','ddd_telefone_2'])||first(address,['telefone']);const email=first(o,['email','correio_eletronico','email_principal'])||first(address,['email']);return {name:first(o,['nome_fantasia','razao_social','nome','nome_empresarial'])||('Empresa '+cnpj),category:categoryNames[$('category').value]||'Empresa',city:first(o,['municipio','cidade','nome_municipio'])||first(address,['municipio','cidade']),uf:first(o,['uf','estado'])||first(address,['uf','estado']),phone:phone.replace(/\D/g,'').length>=8?phone:'',email:/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:'',site:safeUrl(first(o,['site','website','url_site'])),cnpj,recordKey:cnpj?'cnpj:'+cnpj:'',contactChecked:false,source:'SINTEGRA Brasil · cadastro empresarial',sourceUrl:cnpj.length===14?'https://www.sintegrabrasil.com.br/cnpj/'+cnpj:'https://www.sintegrabrasil.com.br/api'}}
 async function searchCompany(){const generation=++searchGeneration;const key=$('api-key').value.trim();if(!key){state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('Informe sua chave gratuita','Crie a chave no link acima, cole neste campo e faça a busca.','empty');$('api-key').focus();return}const category=$('category').value;let cnae=category==='outra'?$('cnae').value.trim():cnaes[category];if(/^\d{4}[\d./-]+$/.test(cnae))cnae=cnae.slice(0,4);if(!cnae){state.rows=[];state.mode='';state.hasMore=false;show([]);setStatus('Informe uma atividade','Digite uma atividade ou código CNAE para buscar outras categorias.');$('cnae').focus();return}const query={cnae,uf:$('uf').value,city:$('term').value.trim(),category:categoryNames[category]||'Empresa'};const p=new URLSearchParams({cnae,limit:'20',offset:String(state.page*20)});if(query.uf)p.set('uf',query.uf);if(query.city)p.set('municipio',query.city);setStatus('Buscando empresas','Consultando a base gratuita por atividade e região.','loading');$('search-btn').disabled=true;try{const res=await api('/api/empresas?'+p,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({apiKey:key})});if(!res.ok)throw new Error(String(res.status));const data=await res.json();if(generation!==searchGeneration)return;const raw=extractRows(data);state.rows=[...new Map(raw.map(mapCompany).filter(r=>r.cnpj.length===14).map(r=>[r.cnpj,r])).values()];for(const r of state.rows){r.phone='';r.email='';r.category=query.category;r.query=query;const cached=contactCache.get(r.cnpj);if(cached)applyCompanyVerification(r,cached)}state.mode='company';state.hasMore=Boolean(data.hasMore??data.has_more??(raw.length===20));show(state.rows);if(state.rows.length)enrichAllRows(state.rows);if(!state.rows.length)setStatus('Nenhuma empresa encontrada','Tente outra cidade, estado ou atividade. A cobertura depende da fonte.')}catch(err){if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);const code=err.message;setStatus(code==='401'?'Chave não aceita':code==='429'?'Limite gratuito atingido':'Não foi possível buscar empresas',code==='401'?'Confira a chave criada no painel da API SINTEGRA Brasil.':code==='429'?'Aguarde a liberação de novas consultas no painel da API.':'Confira sua conexão e tente novamente. A fonte pode estar indisponível.','error')}finally{if(generation===searchGeneration)$('search-btn').disabled=false}}
 function applyCompanyVerification(r,data){
   const q=r.query;
+  if(!q){
+    r.contactChecked=true;
+    if(!r.phone&&data.phone)r.phone=formatPhone(data.phone);
+    r.phones=[...new Set([...(r.phones||[]),...(data.phones||[])])];
+    if(!r.email&&data.email)r.email=data.email;
+    if(!r.address&&data.address)r.address=data.address;
+    if(data.status)r.situacao=data.status;
+    if(data.phone||data.email)r.source=r.source.split(' + ')[0]+' + '+String(data.source||'CNPJ').split(' · ')[0];
+    return true;
+  }
   const numericCnae=Boolean(q&&/^\d{4}$/.test(q.cnae));
   const matches=Boolean(q&&data.cnpj===r.cnpj&&normalize(data.status)==='ativa'&&(!numericCnae||(Array.isArray(data.cnaes)&&data.cnaes.some(code=>code.startsWith(q.cnae))))&&(!q.uf||data.uf===q.uf)&&(!q.city||normalize(data.city)===normalize(q.city)));
   r.contactChecked=true;
@@ -229,9 +293,11 @@ function applyCompanyVerification(r,data){
     r.name=data.name||r.name;
     r.city=data.city||r.city;
     r.uf=data.uf||r.uf;
-    r.phone=data.phone||'';
+    r.phone=data.phone?formatPhone(data.phone):'';
+    r.phones=data.phones||[];
     r.email=data.email||'';
-    r.source='SINTEGRA Brasil + OpenCNPJ';
+    r.address=data.address||r.address;
+    r.source='SINTEGRA Brasil + '+String(data.source||'OpenCNPJ').split(' · ')[0];
     r.sourceUrl=data.sourceUrl||r.sourceUrl;
   }
   return matches;
@@ -249,15 +315,27 @@ async function loadContact(r){
     return true;
   }catch(err){
     if(err.message==='429'){contactPauseUntil=Date.now()+60000;r.contactError='Limite da fonte: tente em 1 minuto'}
+    else if(err.message==='404'){r.contactChecked=true;r.contactError=''}
     else r.contactError='Contato indisponível: tentar de novo';
     return false;
   }finally{r.contactPending=false;if(state.rows.includes(r))show(state.rows)}
 }
 async function enrichAllRows(rows){let next=0;async function worker(){while(state.rows===rows&&next<rows.length&&Date.now()>=contactPauseUntil){const r=rows[next++];if(r.cnpj&&!r.contactChecked)await loadContact(r)}}await Promise.all([worker(),worker(),worker()])}
 function filterImported(){const cat=$('category').value;const uf=$('uf').value;const term=normalize($('term').value);return state.imported.filter(r=>{const c=normalize(r.category);const matchCategory=cat==='outra'?!['saude','medico','medicina','clinica','advocacia','advogado','engenharia','engenheiro','contabilidade','contador'].some(w=>c.includes(w)):cat==='saude'?['saude','medico','medicina','clinica'].some(w=>c.includes(w)):cat==='advocacia'?['advocacia','advogado'].some(w=>c.includes(w)):cat==='engenharia'?['engenharia','engenheiro'].some(w=>c.includes(w)):['contabilidade','contador'].some(w=>c.includes(w));return matchCategory&&(!uf||normalize(r.uf)===normalize(uf))&&(!term||normalize(r.name+' '+r.city).includes(term))})}
-function search(){searchGeneration++;state.page=0;if($('category').value==='saude'){searchCnes();return}if($('api-key').value.trim()){searchCompany();return}if(!state.imported.length){searchCompany();return}state.rows=filterImported();state.mode='csv';state.hasMore=false;show(state.rows);if(!state.rows.length)setStatus('Nenhum contato encontrado','Confira categoria, estado e cidade na planilha importada.')}
+function search(){searchGeneration++;state.page=0;if($('category').value==='saude'){searchCnes();return}if($('category').value==='cnpj'){searchCnpj();return}if($('api-key').value.trim()){searchCompany();return}if(!state.imported.length){searchCompany();return}state.rows=filterImported();state.mode='csv';state.hasMore=false;show(state.rows);if(!state.rows.length)setStatus('Nenhum contato encontrado','Confira categoria, estado e cidade na planilha importada.')}
 $('search-form').addEventListener('submit',e=>{e.preventDefault();search()});
-function updateCategory(){const category=$('category').value;const health=category==='saude';$('api-setup').hidden=health;$('company-contact-note').hidden=health;$('custom-cnae').hidden=category!=='outra';$('source-hint').textContent=health?'Busca ao vivo na base pública CNES para estabelecimentos de saúde.':'Busca empresas por atividade CNAE; não confirma registro profissional individual.';$('source-name').textContent=health?'CNES • Ministério da Saúde':'SINTEGRA Brasil • empresas';$('term').disabled=health;$('term').placeholder=health?'Disponível para outras categorias':'Ex.: Campinas'}
+function updateCategory(){
+  const category=$('category').value;const health=category==='saude';const byCnpj=category==='cnpj';
+  $('api-setup').hidden=health||byCnpj;$('company-contact-note').hidden=health||byCnpj;$('custom-cnae').hidden=category!=='outra';
+  $('cnes-setup').hidden=!health;$('cnpj-setup').hidden=!byCnpj;
+  $('source-hint').textContent=health?'Busca ao vivo na base pública CNES, por estado, cidade e tipo de estabelecimento.':byCnpj?'Consulta direta em três bases públicas de CNPJ.':'Busca empresas por atividade CNAE; não confirma registro profissional individual.';
+  $('source-name').textContent=health?'CNES • Ministério da Saúde':byCnpj?'OpenCNPJ • BrasilAPI • CNPJ.ws':'SINTEGRA Brasil • empresas';
+  $('term').disabled=byCnpj;$('uf').disabled=byCnpj;
+  $('term').placeholder=byCnpj?'Não se aplica à consulta por CNPJ':health?'Escolha o estado e digite a cidade':'Ex.: Campinas';
+  if(health&&$('uf').value)loadCities($('uf').value);
+}
+$('uf').addEventListener('change',()=>{if($('category').value==='saude')loadCities($('uf').value)});
+$('cnpj-input').addEventListener('input',e=>{const d=e.target.value.replace(/\D/g,'').slice(0,14);e.target.value=d.length===14?formatCnpj(d):d});
 $('category').addEventListener('change',updateCategory);updateCategory();
 $('only-contact').addEventListener('change',()=>show(state.rows));
 function searchPage(){if(state.mode==='cnes')searchCnes();else if(state.mode==='company')searchCompany()}

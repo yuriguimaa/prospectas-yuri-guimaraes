@@ -32,6 +32,20 @@ A publicação é automática: o worker `prospectayuriguimaraes` no Cloudflare e
 
 Publicação manual (alternativa): rode `npm run build:cloudflare` e cole o conteúdo de `dist/worker.js` em Edit code no worker.
 
+## API (backend/worker/index.js)
+
+Todas as rotas exigem login (token do Supabase), exceto `/api/auth/*`.
+
+| Rota | O que faz |
+|---|---|
+| `GET /api/cnes?uf=SP&municipio=3509502&tipo=36&offset=0` | Estabelecimentos de saúde (CNES) por estado, cidade (código IBGE) e tipo de unidade. Inclui o nome da cidade. |
+| `GET /api/municipios?uf=SP` | Cidades do estado (IBGE), para o filtro de cidade. |
+| `GET /api/cnpj?cnpj=...` (ou `/api/contato`) | Dados de um CNPJ juntando OpenCNPJ → BrasilAPI → CNPJ.ws: telefones, e-mail, endereço, situação, atividades. |
+| `POST /api/empresas?cnae=...&uf=...&municipio=...` | Busca de empresas na SINTEGRA Brasil (chave do usuário no corpo). |
+| `GET/POST/PATCH/DELETE /api/leads` | Leads salvos do usuário (etapa e anotações via PATCH). |
+
+Robustez: validação dos dígitos do CNPJ; cache (Cache API do Cloudflare + memória) de 7 dias para CNPJ, 5 min para CNES e 30 dias para cidades; se uma fonte responde 429 ela fica em pausa por 1 minuto e a próxima é usada; limite por usuário (60 consultas de CNPJ e 90 buscas por minuto); tentativas automáticas em erros 502/503/504.
+
 ## Rodar localmente
 
 Precisa só do Node.js 18 ou mais novo (não tem dependências).

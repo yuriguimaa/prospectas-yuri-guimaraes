@@ -122,6 +122,117 @@ async function fetchReliable(url,options){
     }catch(error){if(attempt===1)throw error}
   }
 }
+
+// ---------- Robustez: cache, limite de uso e consulta de CNPJ com várias fontes ----------
+const memoryCache=new Map();
+async function cached(key,ttlSeconds,producer){
+  const now=Date.now();
+  const hit=memoryCache.get(key);
+  if(hit&&hit.expires>now)return hit.value;
+  const cacheApi=typeof caches!=='undefined'&&caches.default?caches.default:null;
+  const cacheKey=new Request('https://cache.prospectas.internal/'+encodeURIComponent(key));
+  if(cacheApi){try{const res=await cacheApi.match(cacheKey);if(res){const value=await res.json();memoryCache.set(key,{value,expires:now+Math.min(ttlSeconds,300)*1000});return value}}catch{}}
+  let value=null;
+  try{value=await producer()}catch{value=null}
+  if(value!==null&&value!==undefined){
+    memoryCache.set(key,{value,expires:now+Math.min(ttlSeconds,300)*1000});
+    if(memoryCache.size>500)memoryCache.delete(memoryCache.keys().next().value);
+    if(cacheApi){try{await cacheApi.put(cacheKey,new Response(JSON.stringify(value),{headers:{'content-type':'application/json','cache-control':'public, max-age='+ttlSeconds}}))}catch{}}
+  }
+  return value;
+}
+const usage=new Map();
+function rateLimit(userId,bucket,perMinute){
+  const key=userId+':'+bucket,now=Date.now();
+  const entry=usage.get(key);
+  if(!entry||now-entry.start>60000){usage.set(key,{start:now,count:1});if(usage.size>2000)usage.delete(usage.keys().next().value);return null}
+  entry.count++;
+  if(entry.count>perMinute)return json({error:'Muitas consultas em pouco tempo. Aguarde um minuto.'},429);
+  return null;
+}
+function validCnpj(value){
+  const c=String(value||'').replace(/\D/g,'');
+  if(!/^\d{14}$/.test(c)||/^(\d)\1{13}$/.test(c))return false;
+  const calc=len=>{let sum=0,pos=len-7;for(let i=len;i>=1;i--){sum+=Number(c[len-i])*pos--;if(pos<2)pos=9}const r=sum%11;return r<2?0:11-r};
+  return calc(12)===Number(c[12])&&calc(13)===Number(c[13]);
+}
+function digits(v){return String(v??'').replace(/\D/g,'')}
+function phoneOk(v){const d=digits(v);return /^\d{10,11}$/.test(d)?d:''}
+function emailOk(v){const e=String(v??'').trim().toLowerCase();return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)?e:''}
+function cnaeCode(v){const d=digits(v);return d?d.padStart(7,'0'):''}
+function companyFromOpenCnpj(raw,cnpj){
+  const d=raw&&raw.success===true&&raw.data&&typeof raw.data==='object'?raw.data:null;
+  if(!d||digits(d.cnpj)!==cnpj)return null;
+  return {name:d.nomeFantasia||d.razaoSocial,razaoSocial:d.razaoSocial,city:d.municipio,uf:d.uf,status:d.situacaoCadastral,
+    cnaes:Array.isArray(d.cnaes)?d.cnaes.map(i=>cnaeCode(i.cnae)):[],phones:[d.telefone,d.telefone2].map(phoneOk),email:emailOk(d.email),source:'OpenCNPJ'};
+}
+function companyFromBrasilApi(d,cnpj){
+  if(!d||digits(d.cnpj)!==cnpj)return null;
+  return {name:d.nome_fantasia||d.razao_social,razaoSocial:d.razao_social,city:d.municipio,uf:d.uf,status:d.descricao_situacao_cadastral,
+    cnaes:[cnaeCode(d.cnae_fiscal),...(d.cnaes_secundarios||[]).map(i=>cnaeCode(i.codigo))],mainActivity:d.cnae_fiscal_descricao,
+    phones:[d.ddd_telefone_1,d.ddd_telefone_2].map(phoneOk),email:emailOk(d.email),
+    address:[[d.descricao_tipo_de_logradouro,d.logradouro].filter(Boolean).join(' '),d.numero,d.bairro].filter(Boolean).join(', '),cep:digits(d.cep),
+    porte:d.porte,opened:d.data_inicio_atividade,source:'BrasilAPI'};
+}
+function companyFromCnpjWs(d,cnpj){
+  const e=d&&d.estabelecimento;
+  if(!e||digits(e.cnpj)!==cnpj)return null;
+  return {name:e.nome_fantasia||d.razao_social,razaoSocial:d.razao_social,city:e.cidade&&e.cidade.nome,uf:e.estado&&e.estado.sigla,status:e.situacao_cadastral,
+    cnaes:[cnaeCode(e.atividade_principal&&e.atividade_principal.id),...(e.atividades_secundarias||[]).map(i=>cnaeCode(i.id))],mainActivity:e.atividade_principal&&e.atividade_principal.descricao,
+    phones:[phoneOk((e.ddd1||'')+(e.telefone1||'')),phoneOk((e.ddd2||'')+(e.telefone2||''))],email:emailOk(e.email),
+    address:[[e.tipo_logradouro,e.logradouro].filter(Boolean).join(' '),e.numero,e.bairro].filter(Boolean).join(', '),cep:digits(e.cep),
+    porte:d.porte&&d.porte.descricao,opened:e.data_inicio_atividade,source:'CNPJ.ws'};
+}
+const companySources=[
+  {name:'OpenCNPJ',url:c=>'https://kitana.opencnpj.com/cnpj/'+c,parse:companyFromOpenCnpj},
+  {name:'BrasilAPI',url:c=>'https://brasilapi.com.br/api/cnpj/v1/'+c,parse:companyFromBrasilApi},
+  {name:'CNPJ.ws',url:c=>'https://publica.cnpj.ws/cnpj/'+c,parse:companyFromCnpjWs}
+];
+const sourcePause={};
+async function lookupCompany(cnpj){
+  const hit=await cached('cnpj:'+cnpj,86400*7,async()=>null);
+  if(hit)return {data:hit};
+  const merged={cnpj,phones:[],cnaes:[],sources:[]};
+  let anyFound=false,notFound=0,limited=0;
+  for(const src of companySources){
+    const complete=merged.phones.length>=1&&merged.email&&merged.status;
+    if(complete)break;
+    if((sourcePause[src.name]||0)>Date.now()){limited++;continue}
+    try{
+      const res=await fetchReliable(src.url(cnpj),{headers:{accept:'application/json','user-agent':'ProspectasYuriGuimaraes/1.0'}});
+      if(res.status===429){sourcePause[src.name]=Date.now()+60000;limited++;continue}
+      if(res.status===404){notFound++;continue}
+      if(!res.ok)continue;
+      const company=src.parse(await res.json(),cnpj);
+      if(!company)continue;
+      anyFound=true;merged.sources.push(company.source);
+      for(const [k,v] of Object.entries(company)){
+        if(k==='phones'){for(const ph of v)if(ph&&!merged.phones.includes(ph))merged.phones.push(ph)}
+        else if(k==='cnaes'){for(const c of v)if(c&&!merged.cnaes.includes(c))merged.cnaes.push(c)}
+        else if(k!=='source'&&v&&!merged[k])merged[k]=String(v).trim();
+      }
+    }catch{}
+  }
+  if(!anyFound){
+    if(notFound===companySources.length)return {error:'CNPJ não encontrado',status:404};
+    if(limited)return {error:'Limite temporário das fontes de contatos',status:429};
+    return {error:'Contato indisponível',status:502};
+  }
+  const data={cnpj,name:merged.name||merged.razaoSocial||'',razaoSocial:merged.razaoSocial||'',city:merged.city||'',uf:String(merged.uf||'').toUpperCase(),
+    status:merged.status||'',cnaes:merged.cnaes,mainActivity:merged.mainActivity||'',phone:merged.phones[0]||'',phones:merged.phones,email:merged.email||'',
+    address:merged.address||'',cep:merged.cep||'',porte:merged.porte||'',opened:merged.opened||'',
+    source:merged.sources.join(' + ')+' · cadastro empresarial',sourceUrl:'https://brasilapi.com.br/docs#tag/CNPJ'};
+  await cached('cnpj:'+cnpj,86400*7,async()=>data);
+  return {data};
+}
+async function municipalities(uf){
+  return cached('ibge:'+uf,86400*30,async()=>{
+    const res=await fetchReliable('https://servicodados.ibge.gov.br/api/v1/localidades/estados/'+uf+'/municipios',{headers:{accept:'application/json'}});
+    if(!res.ok)return null;
+    const list=await res.json();
+    return Array.isArray(list)?list.map(m=>({id:m.id,nome:m.nome})):null;
+  });
+}
 export default {
   async fetch(request,env={}) {
     const url = new URL(request.url);
@@ -131,24 +242,17 @@ export default {
     if(url.pathname==='/api/me')return cors(request,json(user?{authenticated:true,email:user.email}:{authenticated:false}));
     if(url.pathname==='/api/leads')return cors(request,user?await savedLeads(request,env,user,url):json({error:'Entre para acessar seus leads'},401));
     if(url.pathname.startsWith('/api/')&&!user)return cors(request,json({error:'Entre para continuar'},401));
-    if(url.pathname==='/api/contato'){
-      const cnpj=url.searchParams.get('cnpj')||'';
-      if(request.method!=='GET'||!/^[0-9]{14}$/.test(cnpj))return cors(request,response(JSON.stringify({error:'CNPJ inválido'}),'application/json; charset=utf-8',400,{'cache-control':'no-store'}));
-      try{
-        const upstream=await fetchReliable('https://kitana.opencnpj.com/cnpj/'+cnpj,{headers:{accept:'application/json'}});
-        if(upstream.status===429)return cors(request,response(JSON.stringify({error:'Limite temporário da fonte de contatos'}),'application/json; charset=utf-8',429,{'cache-control':'no-store'}));
-        if(!upstream.ok)return cors(request,response(JSON.stringify({error:'Contato indisponível'}),'application/json; charset=utf-8',upstream.status===404?404:502,{'cache-control':'no-store'}));
-        const data=await upstream.json();
-        const company=data.success===true&&data.data&&typeof data.data==='object'?data.data:null;
-        if(!company||String(company.cnpj||'').replace(/\D/g,'')!==cnpj)return cors(request,response(JSON.stringify({error:'Cadastro não confirmado'}),'application/json; charset=utf-8',502,{'cache-control':'no-store'}));
-        const phone=String(company.telefone||'').replace(/\D/g,'');
-        const email=String(company.email||'').trim();
-        const cnaes=Array.isArray(company.cnaes)?company.cnaes.map(item=>String(item.cnae||'').replace(/\D/g,'')).filter(Boolean):[];
-        return cors(request,response(JSON.stringify({cnpj,phone:/^\d{10,11}$/.test(phone)?phone:'',email:/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:'',name:String(company.nomeFantasia||company.razaoSocial||'').trim(),city:String(company.municipio||'').trim(),uf:String(company.uf||'').trim().toUpperCase(),status:String(company.situacaoCadastral||'').trim(),cnaes,source:'OpenCNPJ · cadastro empresarial',sourceUrl:'https://opencnpj.com/api'}),'application/json; charset=utf-8',200,{'cache-control':'public, max-age=3600'}));
-      }catch{return cors(request,response(JSON.stringify({error:'Contato indisponível'}),'application/json; charset=utf-8',502,{'cache-control':'no-store'}))}
+    if(url.pathname==='/api/contato'||url.pathname==='/api/cnpj'){
+      const cnpj=(url.searchParams.get('cnpj')||'').replace(/\D/g,'');
+      if(request.method!=='GET'||!validCnpj(cnpj))return cors(request,json({error:'CNPJ inválido'},400));
+      const limited=rateLimit(user.id,'cnpj',60);if(limited)return cors(request,limited);
+      const result=await lookupCompany(cnpj);
+      if(result.error)return cors(request,json({error:result.error},result.status));
+      return cors(request,response(JSON.stringify(result.data),'application/json; charset=utf-8',200,{'cache-control':'private, max-age=3600'}));
     }
     if(url.pathname==='/api/empresas'){
       if(request.method!=='POST')return cors(request,response(JSON.stringify({error:'Use POST'}),'application/json; charset=utf-8',405,{'cache-control':'no-store'}));
+      const limited=rateLimit(user.id,'busca',90);if(limited)return cors(request,limited);
       let key='';
       try{key=String((await request.json()).apiKey||'')}catch{return cors(request,response(JSON.stringify({error:'Corpo inválido'}),'application/json; charset=utf-8',400,{'cache-control':'no-store'}))}
       let cnae=url.searchParams.get('cnae')||'';
@@ -168,18 +272,37 @@ export default {
         return cors(request,response(data,upstream.headers.get('content-type')||'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
       }catch{return cors(request,response(JSON.stringify({error:'Fonte indisponível'}),'application/json; charset=utf-8',502,{'cache-control':'no-store'}))}
     }
+    if(url.pathname==='/api/municipios'){
+      const uf=(url.searchParams.get('uf')||'').toUpperCase();
+      if(!Object.hasOwn(ufCodes,uf))return cors(request,json({error:'UF inválida'},400));
+      const list=await municipalities(uf);
+      if(!list)return cors(request,json({error:'Lista de cidades indisponível'},502));
+      return cors(request,response(JSON.stringify(list),'application/json; charset=utf-8',200,{'cache-control':'public, max-age=86400'}));
+    }
     if(url.pathname==='/api/cnes'){
-      const uf=url.searchParams.get('uf')||'';
+      const uf=(url.searchParams.get('uf')||'').toUpperCase();
+      const municipio=(url.searchParams.get('municipio')||'').replace(/\D/g,'');
+      const tipo=(url.searchParams.get('tipo')||'').replace(/\D/g,'');
       const offset=Number(url.searchParams.get('offset')||0);
-      if((uf&&!Object.hasOwn(ufCodes,uf))||!Number.isInteger(offset)||offset<0||offset>10000)return cors(request,response(JSON.stringify({error:'Filtro inválido'}),'application/json; charset=utf-8',400));
+      if((uf&&!Object.hasOwn(ufCodes,uf))||(municipio&&!/^\d{6,7}$/.test(municipio))||(tipo&&!/^\d{1,3}$/.test(tipo))||!Number.isInteger(offset)||offset<0||offset>10000)return cors(request,json({error:'Filtro inválido'},400));
+      if(municipio&&uf&&!municipio.startsWith(String(ufCodes[uf])))return cors(request,json({error:'Cidade não pertence ao estado escolhido'},400));
+      const limited=rateLimit(user.id,'busca',90);if(limited)return cors(request,limited);
       const p=new URLSearchParams({status:'1',limit:'20',offset:String(offset)});
-      if(uf)p.set('codigo_uf',String(ufCodes[uf]));
-      try{
+      if(municipio)p.set('codigo_municipio',municipio.slice(0,6));
+      else if(uf)p.set('codigo_uf',String(ufCodes[uf]));
+      if(tipo)p.set('codigo_tipo_unidade',String(Number(tipo)));
+      const data=await cached('cnes:'+p,300,async()=>{
         const upstream=await fetchReliable('https://apidadosabertos.saude.gov.br/cnes/estabelecimentos?'+p,{headers:{accept:'application/json'}});
-        if(!upstream.ok)return cors(request,response(JSON.stringify({error:'Fonte pública indisponível'}),'application/json; charset=utf-8',502));
-        const data=await upstream.text();
-        return cors(request,response(data,'application/json; charset=utf-8',200,{'cache-control':'public, max-age=300'}));
-      }catch{return cors(request,response(JSON.stringify({error:'Fonte pública indisponível'}),'application/json; charset=utf-8',502))}
+        if(!upstream.ok)return null;
+        return await upstream.json();
+      });
+      if(!data)return cors(request,json({error:'Fonte pública indisponível'},502));
+      const rows=Array.isArray(data.estabelecimentos)?data.estabelecimentos:Array.isArray(data)?data:[];
+      const ufOf=row=>Object.keys(ufCodes).find(k=>String(ufCodes[k])===String(row.codigo_uf))||uf;
+      const names={};
+      for(const code of new Set(rows.map(ufOf).filter(Boolean))){const list=await municipalities(code);if(list)for(const m of list)names[String(m.id).slice(0,6)]=m.nome}
+      for(const row of rows){const code=String(row.codigo_municipio||'').slice(0,6);if(names[code]&&!row.nome_municipio)row.nome_municipio=names[code];if(!row.uf)row.uf=ufOf(row)}
+      return cors(request,response(JSON.stringify({estabelecimentos:rows}),'application/json; charset=utf-8',200,{'cache-control':'private, max-age=300'}));
     }
     const asset=assets[url.pathname];
     if(asset)return response(asset.body,asset.type,200,{'cache-control':'no-store'});
