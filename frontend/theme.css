@@ -181,3 +181,16 @@ body{background:transparent}
 .import-card{background:radial-gradient(90% 140% at 0% 0%,#1d0c3aeb,#0b0614eb 60%)}
 .source-grid article{background:#0b0614e6}
 .auth-card{background:#0b0614f0}
+/* Sócios / decisores */
+.lead-partners{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--dim)}
+.lead-partners.empty{color:var(--faint)}
+.partners-label{color:var(--faint);margin-right:2px}
+.partner{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--rim);background:#8b5cf60d;border-radius:999px;padding:4px 10px}
+.partner strong{color:var(--ink);font-weight:600;font-size:11px}
+.partner small{color:var(--faint);font-size:10px}
+.partner.decisor{border-color:#8b5cf666;background:#8b5cf61f}
+.partner.decisor strong{color:#e9ddff}
+.partners-more{background:none;border:0;color:var(--plasma);font-size:11px;font-weight:600;padding:2px 4px;cursor:pointer}
+.source-grid{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1100px){.source-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.source-grid{grid-template-columns:1fr}}

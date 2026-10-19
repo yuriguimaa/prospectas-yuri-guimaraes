@@ -166,6 +166,30 @@ async function boot(){
 }
 $('auth-form').addEventListener('submit',authenticate);$('auth-switch').addEventListener('click',()=>{signupMode=!signupMode;updateAuthMode()});$('logout-btn').addEventListener('click',showAuth);updateAuthMode();
 boot();
+function partnersBlock(r){
+  const box=document.createElement('div');box.className='lead-partners';
+  if(Array.isArray(r.partners)){
+    if(!r.partners.length){box.textContent='Sócios: não constam na base da Receita.';box.classList.add('empty');return box}
+    const top=r.partners.filter(p=>p.decisor);const list=(top.length?top:r.partners);
+    const label=document.createElement('span');label.className='partners-label';label.textContent=top.length?'Decisores':'Sócios';box.append(label);
+    const shown=r.partnersOpen?r.partners:list.slice(0,3);
+    for(const p of shown){const chip=document.createElement('span');chip.className='partner'+(p.decisor?' decisor':'');const n=document.createElement('strong');n.textContent=titleCase(p.nome);const c=document.createElement('small');c.textContent=p.cargo+(p.desde?' · desde '+p.desde.slice(0,4):'');chip.append(n,c);box.append(chip)}
+    const hidden=r.partners.length-shown.length;
+    if(hidden>0||r.partnersOpen){const more=document.createElement('button');more.type='button';more.className='partners-more';more.textContent=r.partnersOpen?'Mostrar menos':'+'+hidden+' sócio'+(hidden>1?'s':'');more.addEventListener('click',()=>{r.partnersOpen=!r.partnersOpen;show(state.rows)});box.append(more)}
+    return box;
+  }
+  const btn=document.createElement('button');btn.type='button';btn.className='contact-fetch';
+  btn.textContent=r.partnersPending?'Buscando sócios…':r.partnersError||'Ver sócios e decisores';btn.disabled=Boolean(r.partnersPending);
+  btn.addEventListener('click',()=>loadPartners(r));box.append(btn);return box;
+}
+function titleCase(s){return String(s||'').toLowerCase().replace(/(^|\s)([a-zà-ÿ])/g,(m,a,b)=>a+b.toUpperCase()).replace(/\s(De|Da|Do|Das|Dos|E)\s/g,m=>m.toLowerCase())}
+async function loadPartners(r){
+  if(!r.cnpj||r.partnersPending)return;
+  r.partnersPending=true;r.partnersError='';show(state.rows);
+  try{const res=await api('/api/socios?cnpj='+r.cnpj,{headers:{Accept:'application/json'}});if(!res.ok)throw new Error(String(res.status));const d=await res.json();r.partners=d.partners||[]}
+  catch(e){r.partnersError=e.message==='429'?'Muitas consultas: tente em 1 minuto':'Sócios indisponíveis: tentar de novo'}
+  finally{r.partnersPending=false;if(state.rows.includes(r))show(state.rows)}
+}
 function show(rows){
   const list=$('result-list');
   list.replaceChildren();
@@ -217,6 +241,7 @@ function show(rows){
       save.addEventListener('click',()=>saveLead(r,save));meta.append(save);
     }
     main.append(title,place,meta);
+    if(r.cnpj)main.append(partnersBlock(r));
     const source=document.createElement('div');source.className='lead-source';
     if(r.sourceUrl){setLink(source,'Fonte: '+r.source,r.sourceUrl)}else source.textContent='Fonte: '+r.source;
     card.append(main,source);list.append(card);
@@ -262,7 +287,7 @@ async function searchCnpj(){
     if(!res.ok)throw new Error(String(res.status));
     const d=await res.json();if(generation!==searchGeneration)return;
     contactCache.set(cnpj,d);
-    state.rows=[{name:d.name||d.razaoSocial||('Empresa '+formatCnpj(cnpj)),category:d.mainActivity||'Empresa',city:d.city,uf:d.uf,address:d.address,phone:d.phone?formatPhone(d.phone):'',phones:d.phones||[],email:d.email,site:'',cnpj,situacao:d.status,verified:true,contactChecked:true,recordKey:'cnpj:'+cnpj,source:d.source||'Cadastro empresarial',sourceUrl:d.sourceUrl||''}];
+    state.rows=[{name:d.name||d.razaoSocial||('Empresa '+formatCnpj(cnpj)),category:d.mainActivity||'Empresa',city:d.city,uf:d.uf,address:d.address,phone:d.phone?formatPhone(d.phone):'',phones:d.phones||[],email:d.email,site:'',cnpj,situacao:d.status,verified:true,contactChecked:true,recordKey:'cnpj:'+cnpj,source:d.source||'Cadastro empresarial',sourceUrl:d.sourceUrl||'',partners:Array.isArray(d.partners)?d.partners:undefined}];
     state.mode='cnpj';state.hasMore=false;show(state.rows);
   }catch(err){
     if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
@@ -277,6 +302,7 @@ function applyCompanyVerification(r,data){
     r.contactChecked=true;
     if(!r.phone&&data.phone)r.phone=formatPhone(data.phone);
     r.phones=[...new Set([...(r.phones||[]),...(data.phones||[])])];
+    if(Array.isArray(data.partners))r.partners=data.partners;
     if(!r.email&&data.email)r.email=data.email;
     if(!r.address&&data.address)r.address=data.address;
     if(data.status)r.situacao=data.status;
@@ -297,6 +323,7 @@ function applyCompanyVerification(r,data){
     r.phones=data.phones||[];
     r.email=data.email||'';
     r.address=data.address||r.address;
+    if(Array.isArray(data.partners))r.partners=data.partners;
     r.source='SINTEGRA Brasil + '+String(data.source||'OpenCNPJ').split(' · ')[0];
     r.sourceUrl=data.sourceUrl||r.sourceUrl;
   }
@@ -345,4 +372,4 @@ function csvParse(text){const firstLine=text.split(/\r?\n/,1)[0];const sep=(firs
 function importRows(raw){if(raw.length<2)throw Error('O arquivo precisa de cabeçalho e pelo menos uma linha.');const headers=raw[0].map(x=>normalize(x).replace(/[^a-z0-9]/g,''));const get=(row,names)=>{for(const n of names){const i=headers.indexOf(n);if(i>=0)return String(row[i]??'').trim()}return ''};if(!headers.includes('nome')&&!headers.includes('name'))throw Error('Inclua uma coluna chamada nome.');return raw.slice(1).map((row,index)=>({recordKey:'csv:'+index+':'+normalize(get(row,['nome','name','nomerazaosocial','razaosocial','nomefantasia'])).slice(0,90),name:get(row,['nome','name','nomerazaosocial','razaosocial','nomefantasia']),category:get(row,['categoria','category','profissao','segmento']),city:get(row,['cidade','municipio','city']),uf:get(row,['uf','estado']),phone:get(row,['telefone','phone','celular']),email:get(row,['email','correioeletronico']),site:get(row,['site','website','url']),source:get(row,['fonte','source'])||'CSV importado',sourceUrl:safeUrl(get(row,['urlfonte','linkfonte']))})).filter(r=>r.name)}
 $('csv-file').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024){$('import-count').textContent='Arquivo acima de 10 MB';return}try{const text=(await file.text()).replace(/^\uFEFF/,'');const rows=importRows(csvParse(text));state.imported=rows;$('import-count').textContent=rows.length+' contatos carregados';state.rows=rows;state.mode='csv';state.hasMore=false;state.page=0;show(rows);document.getElementById('results-title').scrollIntoView({behavior:'smooth'})}catch(err){$('import-count').textContent=err.message||'CSV inválido'}});
 function csvCell(v){let value=String(v??'');if(/^[\s]*[=+\-@]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"'}
-$('export-btn').addEventListener('click',()=>{const rows=($('only-contact').checked?state.rows.filter(r=>r.phone||r.email):state.rows).filter(r=>!r.exclude&&(state.mode!=='company'||r.verified));const keys=['name','category','city','uf','phone','email','source','sourceUrl','site'];const labels=['nome','categoria','cidade','uf','telefone','email','fonte','url_fonte','site'];const csv='\uFEFF'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-yuri-guimaraes-contatos.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
+$('export-btn').addEventListener('click',()=>{const rows=($('only-contact').checked?state.rows.filter(r=>r.phone||r.email):state.rows).filter(r=>!r.exclude&&(state.mode!=='company'||r.verified));const keys=['name','category','city','uf','phone','email','socios','source','sourceUrl','site'];const labels=['nome','categoria','cidade','uf','telefone','email','socios_decisores','fonte','url_fonte','site'];for(const r of rows)r.socios=Array.isArray(r.partners)?r.partners.filter(p=>p.decisor).concat(r.partners.filter(p=>!p.decisor)).slice(0,5).map(p=>titleCase(p.nome)+' ('+p.cargo+')').join(', '):'';const csv='\uFEFF'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-yuri-guimaraes-contatos.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});

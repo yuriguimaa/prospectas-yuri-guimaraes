@@ -172,7 +172,7 @@ function companyFromBrasilApi(d,cnpj){
     cnaes:[cnaeCode(d.cnae_fiscal),...(d.cnaes_secundarios||[]).map(i=>cnaeCode(i.codigo))],mainActivity:d.cnae_fiscal_descricao,
     phones:[d.ddd_telefone_1,d.ddd_telefone_2].map(phoneOk),email:emailOk(d.email),
     address:[[d.descricao_tipo_de_logradouro,d.logradouro].filter(Boolean).join(' '),d.numero,d.bairro].filter(Boolean).join(', '),cep:digits(d.cep),
-    porte:d.porte,opened:d.data_inicio_atividade,source:'BrasilAPI'};
+    porte:d.porte,opened:d.data_inicio_atividade,partners:partnersFromApi(d.qsa),source:'BrasilAPI'};
 }
 function companyFromCnpjWs(d,cnpj){
   const e=d&&d.estabelecimento;
@@ -181,7 +181,7 @@ function companyFromCnpjWs(d,cnpj){
     cnaes:[cnaeCode(e.atividade_principal&&e.atividade_principal.id),...(e.atividades_secundarias||[]).map(i=>cnaeCode(i.id))],mainActivity:e.atividade_principal&&e.atividade_principal.descricao,
     phones:[phoneOk((e.ddd1||'')+(e.telefone1||'')),phoneOk((e.ddd2||'')+(e.telefone2||''))],email:emailOk(e.email),
     address:[[e.tipo_logradouro,e.logradouro].filter(Boolean).join(' '),e.numero,e.bairro].filter(Boolean).join(', '),cep:digits(e.cep),
-    porte:d.porte&&d.porte.descricao,opened:e.data_inicio_atividade,source:'CNPJ.ws'};
+    porte:d.porte&&d.porte.descricao,opened:e.data_inicio_atividade,partners:partnersFromApi(d.socios),source:'CNPJ.ws'};
 }
 const companySources=[
   {name:'OpenCNPJ',url:c=>'https://kitana.opencnpj.com/cnpj/'+c,parse:companyFromOpenCnpj},
@@ -189,9 +189,10 @@ const companySources=[
   {name:'CNPJ.ws',url:c=>'https://publica.cnpj.ws/cnpj/'+c,parse:companyFromCnpjWs}
 ];
 const sourcePause={};
-async function lookupCompany(cnpj){
-  const hit=await cached('cnpj:'+cnpj,86400*7,async()=>null);
-  if(hit)return {data:hit};
+async function lookupCompany(cnpj,env){
+  const datasetPartners=await partnersFromDataset(env,cnpj);
+  const hit=await cached('cnpj2:'+cnpj,86400*7,async()=>null);
+  if(hit)return {data:datasetPartners&&datasetPartners.length?{...hit,partners:datasetPartners,partnersSource:'Receita Federal (Dados Abertos CNPJ)'}:hit};
   const merged={cnpj,phones:[],cnaes:[],sources:[]};
   let anyFound=false,notFound=0,limited=0;
   for(const src of companySources){
@@ -209,6 +210,7 @@ async function lookupCompany(cnpj){
       for(const [k,v] of Object.entries(company)){
         if(k==='phones'){for(const ph of v)if(ph&&!merged.phones.includes(ph))merged.phones.push(ph)}
         else if(k==='cnaes'){for(const c of v)if(c&&!merged.cnaes.includes(c))merged.cnaes.push(c)}
+        else if(k==='partners'){if(!merged.apiPartners&&v&&v.length)merged.apiPartners=v}
         else if(k!=='source'&&v&&!merged[k])merged[k]=String(v).trim();
       }
     }catch{}
@@ -221,8 +223,10 @@ async function lookupCompany(cnpj){
   const data={cnpj,name:merged.name||merged.razaoSocial||'',razaoSocial:merged.razaoSocial||'',city:merged.city||'',uf:String(merged.uf||'').toUpperCase(),
     status:merged.status||'',cnaes:merged.cnaes,mainActivity:merged.mainActivity||'',phone:merged.phones[0]||'',phones:merged.phones,email:merged.email||'',
     address:merged.address||'',cep:merged.cep||'',porte:merged.porte||'',opened:merged.opened||'',
-    source:merged.sources.join(' + ')+' · cadastro empresarial',sourceUrl:'https://brasilapi.com.br/docs#tag/CNPJ'};
-  await cached('cnpj:'+cnpj,86400*7,async()=>data);
+    source:merged.sources.join(' + ')+' · cadastro empresarial',sourceUrl:'https://brasilapi.com.br/docs#tag/CNPJ',
+    partners:merged.apiPartners||[],partnersSource:merged.apiPartners?'Cadastro público (API)':''};
+  await cached('cnpj2:'+cnpj,86400*7,async()=>data);
+  if(datasetPartners&&datasetPartners.length)return {data:{...data,partners:datasetPartners,partnersSource:'Receita Federal (Dados Abertos CNPJ)'}};
   return {data};
 }
 async function municipalities(uf){
@@ -232,6 +236,46 @@ async function municipalities(uf){
     const list=await res.json();
     return Array.isArray(list)?list.map(m=>({id:m.id,nome:m.nome})):null;
   });
+}
+
+// ---------- Sócios (Dados Abertos CNPJ da Receita Federal, arquivos em data/assets/socios) ----------
+const QUALIFICACOES={'05':'Administrador','08':'Conselheiro de Administração','10':'Diretor','16':'Presidente','17':'Procurador','18':'Secretário','20':'Sociedade consorciada','21':'Sociedade filiada','22':'Sócio','23':'Sócio capitalista','24':'Sócio comanditado','25':'Sócio comanditário','26':'Sócio de indústria','28':'Sócio-gerente','31':'Sócio ostensivo','33':'Tesoureiro','37':'Sócio PJ no exterior','38':'Sócio PF no exterior','47':'Sócio PF','48':'Sócio PJ','49':'Sócio-administrador','52':'Sócio com capital','53':'Sócio sem capital','54':'Fundador','55':'Sócio comanditado no exterior','56':'Sócio comanditário PF no exterior','57':'Sócio comanditário PJ no exterior','59':'Produtor rural','63':'Cotas em tesouraria','65':'Titular (PF)','66':'Titular (PF no exterior)','70':'Administrador no exterior','71':'Conselheiro no exterior','72':'Diretor no exterior','73':'Presidente no exterior','74':'Sócio-administrador no exterior','75':'Fundador no exterior','78':'Titular (PJ)','79':'Titular (PJ no exterior)'};
+const DECISORES=new Set(['05','10','16','28','49','65','70','72','73','74','78']);
+const shardCache=new Map();
+async function partnersShard(env,prefix){
+  if(shardCache.has(prefix)){const v=shardCache.get(prefix);shardCache.delete(prefix);shardCache.set(prefix,v);return v}
+  if(!env||!env.ASSETS)return null;
+  const res=await env.ASSETS.fetch(new Request('https://assets.local/socios/'+prefix+'.bin'));
+  if(res.status===404){shardCache.set(prefix,'');return ''}
+  if(!res.ok)return null;
+  const text=await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
+  shardCache.set(prefix,text);
+  while(shardCache.size>24)shardCache.delete(shardCache.keys().next().value);
+  return text;
+}
+async function partnersFromDataset(env,cnpj){
+  const basico=String(cnpj).slice(0,8);
+  if(!/^\d{8}$/.test(basico))return null;
+  let text;
+  try{text=await partnersShard(env,basico.slice(0,4))}catch{return null}
+  if(text===null)return null;
+  const key='\n'+basico.slice(4)+'\t';
+  const i=text.indexOf(key);
+  if(i<0)return [];
+  const end=text.indexOf('\n',i+key.length);
+  return text.slice(i+key.length,end<0?undefined:end).split(';').filter(Boolean).map(item=>{
+    const [nome,qual,data,tipo]=item.split('|');
+    return {nome,cargo:QUALIFICACOES[qual]||'Sócio',decisor:DECISORES.has(qual),desde:/^\d{8}$/.test(data||'')?data.slice(0,4)+'-'+data.slice(4,6)+'-'+data.slice(6,8):'',tipo:tipo==='1'?'PJ':tipo==='3'?'Estrangeiro':'PF'};
+  });
+}
+function partnersFromApi(list){
+  return (Array.isArray(list)?list:[]).slice(0,30).map(p=>{
+    const nome=String(p.nome_socio||p.nome||'').trim();
+    const cargo=String(p.qualificacao_socio&&typeof p.qualificacao_socio==='object'?p.qualificacao_socio.descricao:p.qualificacao_socio||'Sócio').trim();
+    const qualCode=String(p.codigo_qualificacao_socio||(p.qualificacao_socio&&p.qualificacao_socio.id)||'').padStart(2,'0');
+    if(!nome||['29','30','67','68'].includes(qualCode)||/menor|incapaz/i.test(cargo))return null;
+    return {nome,cargo,decisor:DECISORES.has(qualCode)||/administrador|diretor|presidente|titular|gerente/i.test(cargo),desde:String(p.data_entrada_sociedade||p.data_entrada||'').slice(0,10),tipo:'PF'};
+  }).filter(Boolean);
 }
 export default {
   async fetch(request,env={}) {
@@ -246,7 +290,7 @@ export default {
       const cnpj=(url.searchParams.get('cnpj')||'').replace(/\D/g,'');
       if(request.method!=='GET'||!validCnpj(cnpj))return cors(request,json({error:'CNPJ inválido'},400));
       const limited=rateLimit(user.id,'cnpj',60);if(limited)return cors(request,limited);
-      const result=await lookupCompany(cnpj);
+      const result=await lookupCompany(cnpj,env);
       if(result.error)return cors(request,json({error:result.error},result.status));
       return cors(request,response(JSON.stringify(result.data),'application/json; charset=utf-8',200,{'cache-control':'private, max-age=3600'}));
     }
@@ -271,6 +315,14 @@ export default {
         try{const parsed=JSON.parse(data);console.log(JSON.stringify({event:'company_search',cnae,uf,municipio,count:Array.isArray(parsed.resultados)?parsed.resultados.length:null,status:upstream.status}))}catch{}
         return cors(request,response(data,upstream.headers.get('content-type')||'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
       }catch{return cors(request,response(JSON.stringify({error:'Fonte indisponível'}),'application/json; charset=utf-8',502,{'cache-control':'no-store'}))}
+    }
+    if(url.pathname==='/api/socios'){
+      const cnpj=(url.searchParams.get('cnpj')||'').replace(/\D/g,'');
+      if(request.method!=='GET'||!validCnpj(cnpj))return cors(request,json({error:'CNPJ inválido'},400));
+      const limited=rateLimit(user.id,'socios',120);if(limited)return cors(request,limited);
+      const partners=await partnersFromDataset(env,cnpj);
+      if(partners===null)return cors(request,json({error:'Base de sócios indisponível'},503));
+      return cors(request,response(JSON.stringify({cnpj,partners,source:'Receita Federal (Dados Abertos CNPJ)'}),'application/json; charset=utf-8',200,{'cache-control':'private, max-age=86400'}));
     }
     if(url.pathname==='/api/municipios'){
       const uf=(url.searchParams.get('uf')||'').toUpperCase();

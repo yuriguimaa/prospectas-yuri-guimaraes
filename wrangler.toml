@@ -7,5 +7,13 @@ workers_dev = true
 # Mantém SUPABASE_URL e SUPABASE_SECRET_KEY cadastradas no painel do Cloudflare.
 keep_vars = true
 
+# Base de sócios (gerada por scripts/build-socios.mjs). Não é pública:
+# com run_worker_first, toda requisição passa pelo worker, que só lê esses
+# arquivos pelo binding ASSETS para usuários logados.
+[assets]
+directory = "./data/assets"
+binding = "ASSETS"
+run_worker_first = true
+
 [build]
 command = "node scripts/build.mjs --same-origin"

@@ -42,9 +42,18 @@ Todas as rotas exigem login (token do Supabase), exceto `/api/auth/*`.
 | `GET /api/municipios?uf=SP` | Cidades do estado (IBGE), para o filtro de cidade. |
 | `GET /api/cnpj?cnpj=...` (ou `/api/contato`) | Dados de um CNPJ juntando OpenCNPJ → BrasilAPI → CNPJ.ws: telefones, e-mail, endereço, situação, atividades. |
 | `POST /api/empresas?cnae=...&uf=...&municipio=...` | Busca de empresas na SINTEGRA Brasil (chave do usuário no corpo). |
+| `GET /api/socios?cnpj=...` | Sócios e decisores da empresa (Receita Federal, Dados Abertos CNPJ). `/api/cnpj` também já devolve `partners`. |
 | `GET/POST/PATCH/DELETE /api/leads` | Leads salvos do usuário (etapa e anotações via PATCH). |
 
 Robustez: validação dos dígitos do CNPJ; cache (Cache API do Cloudflare + memória) de 7 dias para CNPJ, 5 min para CNES e 30 dias para cidades; se uma fonte responde 429 ela fica em pausa por 1 minuto e a próxima é usada; limite por usuário (60 consultas de CNPJ e 90 buscas por minuto); tentativas automáticas em erros 502/503/504.
+
+## Base de sócios (Receita Federal)
+
+`data/assets/socios/` guarda o quadro de sócios dos Dados Abertos do CNPJ em ~9.600 arquivos compactados (um por prefixo de 4 dígitos do CNPJ). Os arquivos são servidos só pelo binding `ASSETS` do worker (`run_worker_first = true`), nunca diretamente na web, e só para usuários logados.
+
+Ficam guardados apenas nome, cargo, data de entrada e tipo (PF/PJ). CPF parcial e faixa etária são descartados, assim como sócios menores de idade ou incapazes. Não existe busca por nome de pessoa.
+
+Para atualizar (a Receita publica todo mês): baixe os arquivos `Socios0.zip` … `Socios9.zip`, rode `node scripts/build-socios.mjs /pasta/dos/zips` e envie a pasta `data/assets` para o GitHub.
 
 ## Rodar localmente
 
