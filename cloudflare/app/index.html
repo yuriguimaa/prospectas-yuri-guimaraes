@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#122821">
+  <meta name="description" content="Encontre e organize contatos profissionais públicos por área e localidade no Brasil.">
+  <title>Prospectas Yuri Guimaraes — contatos com fonte</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=15">
+</head>
+<body>
+  <div id="auth-gate" class="auth-gate" hidden>
+    <div class="auth-card"><div class="brand"><span class="brand-mark">P<span>.</span></span><span>Prospectas<span class="brand-sub">YURI GUIMARAES</span></span></div><span class="overline">ÁREA DE ACESSO</span><h1>Seus contatos em um só lugar.</h1><p id="auth-copy">Entre com seu e-mail para pesquisar e salvar seus leads.</p><form id="auth-form"><label>E-mail<input id="auth-email" type="email" autocomplete="email" required></label><label>Senha<input id="auth-password" type="password" autocomplete="current-password" minlength="8" required></label><button class="auth-button" id="auth-submit" type="submit">Entrar</button></form><p id="auth-message" class="auth-message" aria-live="polite"></p><button class="auth-switch" id="auth-switch" type="button">Ainda não tenho cadastro</button><small>Ao criar sua conta, enviaremos um e-mail de confirmação. Seus leads ficam separados e disponíveis em qualquer dispositivo.</small></div>
+  </div>
+  <div class="shell" id="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">P<span>.</span></span><span>Prospectas<span class="brand-sub">YURI GUIMARAES</span></span></div>
+      <div class="sidebar-label">ESPAÇO DE TRABALHO</div>
+      <nav aria-label="Principal">
+        <a href="#busca" class="nav-item active"><span>⌕</span> Buscar contatos</a>
+        <a href="#importar" class="nav-item"><span>⇧</span> Importar base</a>
+        <a href="#salvos" class="nav-item"><span>☆</span> Meus leads</a>
+        <a href="#fontes" class="nav-item"><span>◫</span> Fontes e cobertura</a>
+      </nav>
+      <div class="sidebar-bottom"><span class="live-dot"></span> Busca gratuita<br><small id="source-name">CNES • Ministério da Saúde</small></div>
+    </aside>
+    <main>
+      <header class="topbar"><span>Visão geral <span class="crumb">/ Buscar contatos</span></span><div class="account"><span id="account-email"></span><button type="button" id="logout-btn">Sair</button></div></header>
+      <div class="content">
+        <section class="hero" id="busca">
+          <div><span class="eyebrow">INTELIGÊNCIA COMERCIAL · BRASIL</span><h1>Encontre os contatos<br>certos, com <em>clareza.</em></h1><p>Explore dados profissionais por segmento e região. Cada resultado mostra a fonte e apenas os contatos realmente disponíveis.</p></div>
+          <div class="hero-art" aria-hidden="true"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div><div class="hero-grid"></div></div>
+        </section>
+        <section class="search-card" aria-labelledby="search-title">
+          <div class="section-heading"><div><span class="overline">01 / PESQUISAR</span><h2 id="search-title">Monte sua busca</h2></div><span class="badge">Dados públicos</span></div>
+          <form id="search-form">
+            <div class="fields">
+              <label>Categoria profissional<select id="category"><option value="saude">Saúde / clínicas</option><option value="advocacia">Advocacia / escritórios</option><option value="engenharia">Engenharia / empresas</option><option value="contabilidade">Contabilidade / empresas</option><option value="outra">Outra atividade (CNAE)</option></select></label>
+              <label>Estado<select id="uf"><option value="">Todo o Brasil</option></select></label>
+              <label id="term-label">Cidade<input id="term" type="search" placeholder="Disponível para empresas" autocomplete="off"></label>
+            </div>
+            <div id="api-setup" class="api-setup" hidden><label>Chave gratuita da API<input id="api-key" type="password" placeholder="Cole sua chave sk_..." autocomplete="off" spellcheck="false"></label><p>Para buscar empresas, <a href="https://www.sintegrabrasil.com.br/api/painel" target="_blank" rel="noopener noreferrer">crie uma chave gratuita ↗</a> (até 100 consultas/dia). A chave não é salva; o site a encaminha somente à API SINTEGRA Brasil durante a busca.</p></div>
+            <div id="custom-cnae" class="custom-cnae" hidden><label>Atividade ou código CNAE<input id="cnae" type="text" placeholder="Ex.: arquitetura ou 7111" autocomplete="off"></label><p>Use os 4 primeiros dígitos do CNAE para conferir também a atividade. Em buscas por texto, confirmamos CNPJ, situação cadastral e localidade.</p></div>
+            <div class="search-actions"><p id="source-hint">Busca ao vivo na base pública CNES para estabelecimentos de saúde.</p><button type="submit" id="search-btn">Buscar contatos <span>↗</span></button></div>
+          </form>
+        </section>
+        <section class="results" aria-labelledby="results-title">
+          <div class="results-heading"><div><span class="overline">02 / RESULTADOS</span><h2 id="results-title">Contatos encontrados <span id="count">0</span></h2></div><div class="result-actions"><label class="check"><input type="checkbox" id="only-contact"> Com telefone ou e-mail</label><button id="export-btn" class="outline" disabled>↓ Exportar CSV</button></div></div>
+          <p id="company-contact-note" class="company-contact-note" hidden>Conferimos CNPJ, atividade, situação cadastral e localidade antes de confirmar cada empresa. Os telefones e e-mails aparecem quando constam no cadastro público. Resultados fora dos filtros são retirados da lista.</p>
+          <p id="verification-summary" class="verification-summary" aria-live="polite" hidden></p>
+          <div id="status" class="status empty"><div class="status-icon">⌕</div><strong>Comece com uma busca</strong><span>Selecione a categoria e a região para encontrar contatos.</span></div>
+          <div id="result-list" class="result-list" aria-live="polite"></div>
+          <div class="pagination"><button id="prev-btn" class="outline" disabled>← Anterior</button><span id="page-label">Página 1</span><button id="next-btn" class="outline" disabled>Próxima →</button></div>
+        </section>
+        <section class="import-card" id="importar"><div><span class="overline">SUA BASE / CSV</span><h2>Já tem uma planilha pública?</h2><p>Você também pode importar seus contatos em CSV. O arquivo fica neste navegador; apenas os leads que você salvar são enviados ao seu banco de dados.</p><div class="import-links"><a href="modelo.csv" download>↓ Baixar modelo CSV</a><span>Colunas: nome, categoria, cidade, uf, telefone, email, fonte, site</span></div></div><label class="upload"><input type="file" id="csv-file" accept=".csv,text/csv"><span>⇧</span><strong>Selecionar arquivo CSV</strong><small id="import-count">Até 10 MB • UTF-8</small></label></section>
+        <section class="saved-card" id="salvos"><div><span class="overline">SUA LISTA</span><h2>Meus leads salvos <span id="saved-count">0</span></h2><p>Os contatos desta lista ficam no banco de dados e aparecem quando você entra em outro dispositivo.</p></div><div class="saved-toolbar"><input id="saved-search" type="search" placeholder="Buscar nos seus leads (nome, cidade, categoria…)" autocomplete="off" aria-label="Buscar nos leads salvos"><button id="saved-export" class="outline" type="button" disabled>↓ Exportar meus leads</button></div><div id="saved-list" class="saved-list"></div><p id="saved-status" class="saved-status">Carregando seus leads…</p></section>
+        <section class="sources" id="fontes"><div><span class="overline">TRANSPARÊNCIA</span><h2>Origem dos dados</h2></div><div class="source-grid"><article><span class="source-no">01</span><h3>CNES</h3><p>Estabelecimentos de saúde cadastrados pelo Ministério da Saúde. Busca por UF, com página de resultados atualizada ao consultar.</p><a href="https://apidadosabertos.saude.gov.br/" target="_blank" rel="noopener">Ver fonte ↗</a></article><article><span class="source-no">02</span><h3>SINTEGRA Brasil</h3><p>Busca gratuita de empresas por atividade CNAE, região e cidade. Exige sua chave gratuita; os dados têm origem cadastral e não confirmam registro profissional individual.</p><a href="https://www.sintegrabrasil.com.br/api" target="_blank" rel="noopener">Ver API ↗</a></article><article><span class="source-no">03</span><h3>OpenCNPJ</h3><p>Consulta gratuita por CNPJ para telefone e e-mail empresariais, quando cadastrados.</p><a href="https://opencnpj.com/api" target="_blank" rel="noopener">Ver API ↗</a></article></div></section>
+        <footer>Prospectas Yuri Guimaraes <span>Dados públicos exigem revisão antes do contato. © 2026</span></footer>
+      </div>
+    </main>
+  </div>
+  <script src="app.js?v=19"></script>
+</body>
+</html>

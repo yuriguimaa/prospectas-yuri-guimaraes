@@ -21,10 +21,15 @@ Este pacote contém o código do site, backend e arquivos da hospedagem Cloudfla
 
 ## URLs em uso
 
-- Backend atual: `https://prospecta-br-bot.yuryguimaa.chatgpt.site`
-- Landing pública: `https://prospectas-yuri-guimaraes.yuryguimaa.workers.dev`
+- Site e servidor (Cloudflare Worker `prospectayuriguimaraes`): `https://prospectayuriguimaraes.yuryguimaa.workers.dev`
+- Plataforma: `https://prospectayuriguimaraes.yuryguimaa.workers.dev/app/`
+- Variáveis no Cloudflare: `SUPABASE_URL` (texto) e `SUPABASE_SECRET_KEY` (secret).
 
-Antes de mover o backend para outro domínio, atualize `API_BASE` em `frontend/app.js` e `cloudflare/app/app.js`.
+## Publicar uma nova versão
+
+A publicação é automática: o worker `prospectayuriguimaraes` no Cloudflare está ligado a este repositório (Workers Builds). Cada envio para a branch `main` roda `node scripts/build.mjs --same-origin` e publica `dist/worker.js`, conforme `wrangler.toml`. As variáveis `SUPABASE_URL` e `SUPABASE_SECRET_KEY` ficam no painel do Cloudflare (`keep_vars = true` impede que sejam apagadas).
+
+Publicação manual (alternativa): rode `npm run build:cloudflare` e cole o conteúdo de `dist/worker.js` em Edit code no worker.
 
 ## Rodar localmente
 

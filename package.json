@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:cloudflare": "node scripts/build.mjs --same-origin",
     "dev": "node scripts/build.mjs --local && node scripts/dev.mjs"
   }
 }

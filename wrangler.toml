@@ -1,0 +1,11 @@
+# Publicação automática no Cloudflare (Workers Builds).
+# A cada envio para a branch main, o Cloudflare roda o build e publica.
+name = "prospectayuriguimaraes"
+main = "dist/worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+# Mantém SUPABASE_URL e SUPABASE_SECRET_KEY cadastradas no painel do Cloudflare.
+keep_vars = true
+
+[build]
+command = "node scripts/build.mjs --same-origin"
