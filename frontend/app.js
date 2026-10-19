@@ -23,7 +23,7 @@ function restoreSessionFromConfirmation(){const hash=new URLSearchParams(locatio
 function updateAuthMode(){const submit=$('auth-submit');submit.textContent=signupMode?'Criar conta':'Entrar';$('auth-copy').textContent=signupMode?'Crie sua conta com e-mail e confirme pelo link enviado para sua caixa de entrada.':'Entre com seu e-mail para pesquisar e salvar seus leads.';$('auth-switch').textContent=signupMode?'Já tenho cadastro':'Ainda não tenho cadastro';$('auth-password').autocomplete=signupMode?'new-password':'current-password';setAuthMessage('')}
 function authError(data){const code=String(data.error_code||data.code||'');const raw=String(data.error_description||data.msg||data.message||data.error||'');if(code==='invalid_credentials'||/invalid login credentials/i.test(raw))return 'E-mail ou senha incorretos.';if(code==='email_not_confirmed'||/not confirmed/i.test(raw))return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';if(code==='user_already_exists'||/already registered/i.test(raw))return 'Este e-mail já tem cadastro. Use "Já tenho cadastro" para entrar.';if(/invalid api key/i.test(raw))return 'O servidor está com a configuração do banco de dados incorreta. Avise o administrador.';if(/rate limit/i.test(raw))return raw;return raw||'Não foi possível concluir o acesso.'}
 async function authenticate(event){event.preventDefault();const email=$('auth-email').value.trim(),password=$('auth-password').value;const button=$('auth-submit');button.disabled=true;setAuthMessage(signupMode?'Criando sua conta…':'Entrando…');try{const res=await api('/api/auth/'+(signupMode?'signup':'login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});const data=await res.json();if(!res.ok)throw Error(authError(data));if(signupMode){setAuthMessage('Confira seu e-mail e confirme o cadastro para entrar.');return}session={access_token:data.access_token,refresh_token:data.refresh_token};if(!session.access_token)throw Error('A conta precisa ser confirmada por e-mail antes do primeiro acesso.');localStorage.setItem(sessionKey,JSON.stringify(session));await boot()}catch(error){const message=error.message||'Não foi possível concluir o acesso.';setAuthMessage(/rate limit/i.test(message)?'O serviço de e-mail atingiu o limite temporário. Aguarde uma hora antes de criar outra conta.':message,true)}finally{button.disabled=false}}
-const state={rows:[],imported:[],page:0,mode:'',query:null,total:null,hasMore:false};
+const state={rows:[],imported:[],page:0,mode:'',query:null,total:null,hasMore:false,mapsTokens:['']};
 const contactCache=new Map();
 const savedKeys=new Set();
 let savedRows=[];
@@ -216,7 +216,7 @@ function show(rows){
       title.append(badge);
     }
     if(r.situacao&&normalize(r.situacao)!=='ativa'){const warn=document.createElement('span');warn.className='lead-verification lead-warning';warn.textContent='Situação: '+r.situacao;title.append(warn)}
-    const place=document.createElement('div');place.className='lead-place';place.textContent=[r.address,[r.city,r.uf].filter(Boolean).join(' · ')||'Localidade não informada',r.cnpj?'CNPJ '+formatCnpj(r.cnpj):''].filter(Boolean).join(' · ');
+    const place=document.createElement('div');place.className='lead-place';place.textContent=[r.rating?'★ '+String(r.rating).replace('.',',')+' ('+r.reviews+' avaliações)':'',r.address,r.address&&state.mode==='maps'?'':([r.city,r.uf].filter(Boolean).join(' · ')||'Localidade não informada'),r.cnpj?'CNPJ '+formatCnpj(r.cnpj):''].filter(Boolean).join(' · ');
     const meta=document.createElement('div');meta.className='lead-meta';
     const phone=document.createElement('span');
     if(r.phone){setLink(phone,'☎ '+r.phone,'tel:'+r.phone.replace(/[^\d+]/g,''))}
@@ -227,7 +227,7 @@ function show(rows){
     meta.append(phone,email);
     for(const extra of (r.phones||[]).filter(x=>x&&x.replace(/\D/g,'')!==String(r.phone||'').replace(/\D/g,'')).slice(0,2)){const sp=document.createElement('span');setLink(sp,'☎ '+formatPhone(extra),'tel:'+extra.replace(/\D/g,''));meta.append(sp)}
     if(r.phone)addWhatsapp(meta,r.phone);
-    if(r.site&&safeUrl(r.site)){const site=document.createElement('span');setLink(site,'↗ Site',safeUrl(r.site));meta.append(site)}
+    if(r.site&&safeUrl(r.site)){const site=document.createElement('span');setLink(site,/instagram\.com/i.test(r.site)?'↗ Instagram':/facebook\.com/i.test(r.site)?'↗ Facebook':'↗ Site',safeUrl(r.site));meta.append(site)}
     if(r.cnpj&&(!r.contactChecked||!r.phone||!r.email)){
       const btn=document.createElement('button');btn.type='button';btn.className='contact-fetch';
       btn.textContent=r.contactPending?(r.query?'Conferindo cadastro…':'Buscando contatos…'):r.contactChecked?'Sem outros contatos cadastrados':r.contactError||(r.query?'Conferir cadastro e contatos':'Buscar mais contatos pelo CNPJ');
@@ -249,8 +249,8 @@ function show(rows){
   if(filtered.length){$('status').hidden=true}
   else setStatus(state.mode==='company'&&excluded?'Nenhuma empresa confirmada nesta página':'Nenhum contato nesta página',pending?'Aguarde a conferência dos cadastros.':'Ajuste os filtros ou avance para a próxima página.');
   $('page-label').textContent='Página '+(state.page+1);
-  $('prev-btn').disabled=!['cnes','company'].includes(state.mode)||state.page===0;
-  $('next-btn').disabled=!['cnes','company'].includes(state.mode)||!state.hasMore;
+  $('prev-btn').disabled=!['cnes','company','maps'].includes(state.mode)||state.page===0;
+  $('next-btn').disabled=!['cnes','company','maps'].includes(state.mode)||!state.hasMore;
 }
 function mapCnes(o){const code=first(o,['codigo_cnes','co_cnes','cnes']);const ufCode=first(o,['codigo_uf']);const uf=first(o,['uf','sigla_uf','estado'])||Object.keys(UFS).find(k=>String(UFS[k])===ufCode)||'';const rawPhone=first(o,['numero_telefone_estabelecimento','numero_telefone','telefone','estabelecimento_telefone','nu_telefone','ddd_telefone']);const rawEmail=first(o,['endereco_email_estabelecimento','endereco_email','email','estabelecimento_email','ds_email']);const cnpj=first(o,['numero_cnpj','cnpj','numero_cnpj_entidade']).replace(/\D/g,'');const phone=rawPhone.replace(/\D/g,'').length>=8?rawPhone:'';const email=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)?rawEmail:'';const address=[first(o,['endereco_estabelecimento','logradouro']),first(o,['numero_estabelecimento']),first(o,['bairro_estabelecimento'])].filter(Boolean).join(', ');return {name:first(o,['nome_fantasia','estabelecimento_nome_fantasia','nome_razao_social','razao_social','no_fantasia','nome'])||('Estabelecimento CNES '+code),category:'Saúde',city:first(o,['nome_municipio','municipio','no_municipio','municipio_nome'])||('Município IBGE '+first(o,['codigo_municipio'])),uf,address,phone,email,site:'',cnpj:validCnpj(cnpj)?cnpj:'',verified:true,contactChecked:!validCnpj(cnpj)||Boolean(phone&&email),recordKey:code?'cnes:'+code:'',source:'CNES · Ministério da Saúde',sourceUrl:code?'https://cnes.datasus.gov.br/pages/estabelecimentos/consulta.jsp':'https://apidadosabertos.saude.gov.br/'}}
 function extractRows(data){if(Array.isArray(data))return data;for(const k of ['estabelecimentos','resultados','dados','data','results','items','content'])if(Array.isArray(data?.[k]))return data[k];return []}
@@ -365,7 +365,28 @@ $('uf').addEventListener('change',()=>{if($('category').value==='saude')loadCiti
 $('cnpj-input').addEventListener('input',e=>{const d=e.target.value.replace(/\D/g,'').slice(0,14);e.target.value=d.length===14?formatCnpj(d):d});
 $('category').addEventListener('change',updateCategory);updateCategory();
 $('only-contact').addEventListener('change',()=>show(state.rows));
-function searchPage(){if(state.mode==='cnes')searchCnes();else if(state.mode==='company')searchCompany()}
+
+async function searchMaps(){
+  const generation=++searchGeneration;const q=$('maps-q').value.trim();
+  if(q.length<2){$('maps-q').focus();return}
+  const token=state.mapsTokens?.[state.page]||'';
+  const p=new URLSearchParams({q});const uf=$('maps-uf').value,city=$('maps-city').value.trim();if(uf)p.set('uf',uf);if(city)p.set('cidade',city);if(token)p.set('page',token);
+  setStatus('Buscando no Google Maps','Procurando "'+q+'"'+(city||uf?' em '+[city,uf].filter(Boolean).join(', '):'')+'.','loading');$('maps-btn').disabled=true;
+  document.getElementById('results-title').scrollIntoView({behavior:'smooth',block:'start'});
+  try{
+    const res=await api('/api/maps?'+p,{headers:{Accept:'application/json'}});const data=await res.json().catch(()=>({}));
+    if(!res.ok){const e=new Error(data.error||String(res.status));e.code=data.code||res.status;throw e}
+    if(generation!==searchGeneration)return;
+    state.rows=(data.places||[]).map(pl=>({name:pl.name,category:pl.category||'Estabelecimento',address:pl.address,city:pl.city,uf:pl.uf,phone:pl.phone,email:'',site:pl.site,rating:pl.rating,reviews:pl.reviews,situacao:pl.temporarilyClosed?'Fechado temporariamente':'',recordKey:'gmaps:'+pl.id,source:'Google Maps',sourceUrl:pl.mapsUrl}));
+    state.mode='maps';state.mapsTokens[state.page+1]=data.nextPage||'';state.hasMore=Boolean(data.nextPage);show(state.rows);
+    if(!state.rows.length)setStatus('Nada encontrado no Google Maps','Tente outro termo (ex.: "dentista" em vez de "odontologia") ou uma região maior.');
+  }catch(err){
+    if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
+    setStatus(err.code==='maps_not_configured'?'Google Maps ainda não configurado':'Não foi possível buscar no Google Maps',err.code==='maps_not_configured'?'O administrador precisa cadastrar a chave GOOGLE_MAPS_API_KEY no Cloudflare.':err.message,'error');
+  }finally{if(generation===searchGeneration)$('maps-btn').disabled=false}
+}
+$('maps-form').addEventListener('submit',e=>{e.preventDefault();searchGeneration++;state.page=0;state.mapsTokens=[''];searchMaps()});
+function searchPage(){if(state.mode==='cnes')searchCnes();else if(state.mode==='company')searchCompany();else if(state.mode==='maps')searchMaps()}
 $('prev-btn').addEventListener('click',()=>{if(state.page>0){state.page--;searchPage()}});
 $('next-btn').addEventListener('click',()=>{if(state.hasMore){state.page++;searchPage()}});
 function csvParse(text){const firstLine=text.split(/\r?\n/,1)[0];const sep=(firstLine.match(/;/g)||[]).length>(firstLine.match(/,/g)||[]).length?';':',';const out=[];let row=[],cell='',quoted=false;for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++}else quoted=!quoted}else if(ch===sep&&!quoted){row.push(cell);cell=''}else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(v=>v.trim()))out.push(row);row=[];cell=''}else cell+=ch}row.push(cell);if(row.some(v=>v.trim()))out.push(row);return out}

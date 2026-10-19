@@ -42,6 +42,7 @@ Todas as rotas exigem login (token do Supabase), exceto `/api/auth/*`.
 | `GET /api/municipios?uf=SP` | Cidades do estado (IBGE), para o filtro de cidade. |
 | `GET /api/cnpj?cnpj=...` (ou `/api/contato`) | Dados de um CNPJ juntando OpenCNPJ → BrasilAPI → CNPJ.ws: telefones, e-mail, endereço, situação, atividades. |
 | `POST /api/empresas?cnae=...&uf=...&municipio=...` | Busca de empresas na SINTEGRA Brasil (chave do usuário no corpo). |
+| `GET /api/maps?q=dentista&cidade=Porto Alegre&uf=RS&page=` | Estabelecimentos do Google Maps (Places API oficial, Text Search): nome, endereço, telefone, site, nota e avaliações; 20 por página, até 60. Exige `GOOGLE_MAPS_API_KEY` (secret) no Cloudflare. |
 | `GET /api/socios?cnpj=...` | Sócios e decisores da empresa (Receita Federal, Dados Abertos CNPJ). `/api/cnpj` também já devolve `partners`. |
 | `GET/POST/PATCH/DELETE /api/leads` | Leads salvos do usuário (etapa e anotações via PATCH). |
 

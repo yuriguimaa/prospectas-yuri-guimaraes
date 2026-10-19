@@ -324,6 +324,24 @@ export default {
       if(partners===null)return cors(request,json({error:'Base de sócios indisponível'},503));
       return cors(request,response(JSON.stringify({cnpj,partners,source:'Receita Federal (Dados Abertos CNPJ)'}),'application/json; charset=utf-8',200,{'cache-control':'private, max-age=86400'}));
     }
+    if(url.pathname==='/api/maps'){
+      if(request.method!=='GET')return cors(request,json({error:'Método inválido'},405));
+      if(!env.GOOGLE_MAPS_API_KEY)return cors(request,json({error:'Busca no Google Maps ainda não configurada',code:'maps_not_configured'},503));
+      const q=clean(url.searchParams.get('q'),80),city=clean(url.searchParams.get('cidade'),80),uf=(url.searchParams.get('uf')||'').toUpperCase(),pageToken=clean(url.searchParams.get('page'),600);
+      if(q.length<2||(uf&&!Object.hasOwn(ufCodes,uf)))return cors(request,json({error:'Informe o que procurar (ex.: clínica odontológica) e a região'},400));
+      const limited=rateLimit(user.id,'maps',30);if(limited)return cors(request,limited);
+      const textQuery=[q,city&&('em '+city),uf].filter(Boolean).join(' ')+', Brasil';
+      const fields=['places.id','places.displayName','places.formattedAddress','places.addressComponents','places.nationalPhoneNumber','places.internationalPhoneNumber','places.websiteUri','places.rating','places.userRatingCount','places.googleMapsUri','places.businessStatus','places.primaryTypeDisplayName','nextPageToken'].join(',');
+      const data=await cached('maps:'+textQuery+':'+pageToken,86400,async()=>{
+        const res=await fetchReliable('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'content-type':'application/json','X-Goog-Api-Key':String(env.GOOGLE_MAPS_API_KEY).trim(),'X-Goog-FieldMask':fields},body:JSON.stringify({textQuery,languageCode:'pt-BR',regionCode:'BR',pageSize:20,...(pageToken?{pageToken}:{})})});
+        if(!res.ok){const t=await res.text();console.log(JSON.stringify({event:'maps_error',status:res.status,detail:t.slice(0,300)}));return {error:res.status}}
+        return await res.json();
+      });
+      if(!data||data.error){const st=data&&data.error;return cors(request,json({error:st===403?'Chave do Google Maps sem permissão para a Places API':st===429?'Limite do Google Maps atingido. Tente mais tarde.':'Google Maps indisponível no momento'},st===429?429:502))}
+      const comp=(p,type)=>{const c=(p.addressComponents||[]).find(c=>(c.types||[]).includes(type));return c?(type==='administrative_area_level_1'?c.shortText:c.longText):''};
+      const places=(data.places||[]).filter(p=>p.businessStatus!=='CLOSED_PERMANENTLY').map(p=>({id:p.id,name:p.displayName&&p.displayName.text||'',category:p.primaryTypeDisplayName&&p.primaryTypeDisplayName.text||'',address:p.formattedAddress||'',city:comp(p,'administrative_area_level_2'),uf:comp(p,'administrative_area_level_1'),phone:p.nationalPhoneNumber||'',site:p.websiteUri||'',rating:p.rating||null,reviews:p.userRatingCount||0,mapsUrl:p.googleMapsUri||'',temporarilyClosed:p.businessStatus==='CLOSED_TEMPORARILY'}));
+      return cors(request,json({places,nextPage:data.nextPageToken||''}));
+    }
     if(url.pathname==='/api/municipios'){
       const uf=(url.searchParams.get('uf')||'').toUpperCase();
       if(!Object.hasOwn(ufCodes,uf))return cors(request,json({error:'UF inválida'},400));
