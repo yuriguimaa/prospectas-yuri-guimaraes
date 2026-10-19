@@ -84,3 +84,25 @@ footer span:first-child{font-weight:600;color:var(--dim)}
 .hero h1{font-size:clamp(30px,3.5vw,52px);letter-spacing:-1.5px}
 .steps h2,.sources h2,.cta h2{letter-spacing:-.8px}
 @media(max-width:1000px) and (min-width:801px){.hero{grid-template-columns:1fr;padding:60px 48px}.hero-visual{height:330px;min-height:0}}
+
+/* Fundo animado (bg.js): aurora + rede de pontos */
+.bg-aurora,#bg-net{position:fixed;inset:0;pointer-events:none;z-index:0}
+#bg-net{width:100%;height:100%;opacity:.9}
+.bg-aurora{overflow:hidden;background:#000}
+.bg-aurora span{position:absolute;border-radius:50%;opacity:.55;will-change:transform}
+.bg-aurora span:nth-child(1){width:58vmax;height:58vmax;left:-14vmax;top:-18vmax;background:radial-gradient(circle,#6d28d9 0%,#3b0f7a 45%,transparent 70%);animation:aurora-a 26s ease-in-out infinite alternate}
+.bg-aurora span:nth-child(2){width:48vmax;height:48vmax;right:-16vmax;top:18vh;background:radial-gradient(circle,#a855f7 0%,#581c87 45%,transparent 70%);opacity:.4;animation:aurora-b 32s ease-in-out infinite alternate}
+.bg-aurora span:nth-child(3){width:44vmax;height:44vmax;left:22vw;bottom:-26vmax;background:radial-gradient(circle,#4338ca 0%,#1e1b4b 50%,transparent 72%);opacity:.45;animation:aurora-c 38s ease-in-out infinite alternate}
+@keyframes aurora-a{to{transform:translate(18vw,14vh) scale(1.15)}}
+@keyframes aurora-b{to{transform:translate(-22vw,-10vh) scale(.9)}}
+@keyframes aurora-c{to{transform:translate(-12vw,-16vh) scale(1.2)}}
+@media (prefers-reduced-motion:reduce){.bg-aurora span:nth-child(n){animation:none}}
+body>*:not(.bg-aurora):not(#bg-net){position:relative;z-index:1}
+body{background:transparent}
+.hero{background:radial-gradient(110% 140% at 85% 15%,#2a1052cc 0%,#0b0614b3 45%,#000000a6 78%);backdrop-filter:blur(2px)}
+.step-grid article{background:linear-gradient(180deg,#130a22cc,#0b0614cc);backdrop-filter:blur(10px)}
+.sources{background:radial-gradient(90% 160% at 0% 0%,#1d0c3acc,#0b0614cc 60%);backdrop-filter:blur(10px)}
+.hero,.step-grid article,.sources{backdrop-filter:none}
+.step-grid article{background:linear-gradient(180deg,#130a22e6,#0b0614e6)}
+.sources{background:radial-gradient(90% 160% at 0% 0%,#1d0c3ae6,#0b0614e6 60%)}
+.lead-card{backdrop-filter:none;background:#0b0614eb}

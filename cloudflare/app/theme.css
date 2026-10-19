@@ -151,3 +151,33 @@ footer span{color:var(--faint)}
 @media(max-width:700px){.topbar{position:static}.brand-sub{letter-spacing:1.8px}}
 .hero h1{font-size:clamp(24px,2.5vw,33px);letter-spacing:-1px}
 .search-actions button{white-space:nowrap}
+
+/* Fundo animado (bg.js): aurora + rede de pontos */
+.bg-aurora,#bg-net{position:fixed;inset:0;pointer-events:none;z-index:0}
+#bg-net{width:100%;height:100%;opacity:.9}
+.bg-aurora{overflow:hidden;background:#000}
+.bg-aurora span{position:absolute;border-radius:50%;opacity:.55;will-change:transform}
+.bg-aurora span:nth-child(1){width:58vmax;height:58vmax;left:-14vmax;top:-18vmax;background:radial-gradient(circle,#6d28d9 0%,#3b0f7a 45%,transparent 70%);animation:aurora-a 26s ease-in-out infinite alternate}
+.bg-aurora span:nth-child(2){width:48vmax;height:48vmax;right:-16vmax;top:18vh;background:radial-gradient(circle,#a855f7 0%,#581c87 45%,transparent 70%);opacity:.4;animation:aurora-b 32s ease-in-out infinite alternate}
+.bg-aurora span:nth-child(3){width:44vmax;height:44vmax;left:22vw;bottom:-26vmax;background:radial-gradient(circle,#4338ca 0%,#1e1b4b 50%,transparent 72%);opacity:.45;animation:aurora-c 38s ease-in-out infinite alternate}
+@keyframes aurora-a{to{transform:translate(18vw,14vh) scale(1.15)}}
+@keyframes aurora-b{to{transform:translate(-22vw,-10vh) scale(.9)}}
+@keyframes aurora-c{to{transform:translate(-12vw,-16vh) scale(1.2)}}
+@media (prefers-reduced-motion:reduce){.bg-aurora span:nth-child(n){animation:none}}
+body>*:not(.bg-aurora):not(#bg-net){position:relative;z-index:1}
+body{background:transparent}
+.sidebar{background:linear-gradient(180deg,#0b0614d9,#000000cc);backdrop-filter:blur(14px)}
+.hero{background:radial-gradient(120% 140% at 85% 20%,#2a1052cc 0%,#0b0614b3 45%,#000000a6 75%)}
+.search-card,.results,.saved-card{background:linear-gradient(180deg,#130a22d9,#0b0614d9);backdrop-filter:blur(12px)}
+.import-card{background:radial-gradient(90% 140% at 0% 0%,#1d0c3ad9,#0b0614d9 60%);backdrop-filter:blur(12px)}
+.source-grid article{background:#0b0614cc;backdrop-filter:blur(10px)}
+.lead,.saved-item{background:#07030ee6}
+.auth-gate{background:transparent}
+.shell{position:relative;z-index:1}
+.sidebar,.topbar,.search-card,.results,.saved-card,.import-card,.source-grid article,.auth-card{backdrop-filter:none}
+.sidebar{background:linear-gradient(180deg,#0b0614f0,#000000e6)}
+.topbar{background:#000000e6}
+.search-card,.results,.saved-card{background:linear-gradient(180deg,#130a22eb,#0b0614eb)}
+.import-card{background:radial-gradient(90% 140% at 0% 0%,#1d0c3aeb,#0b0614eb 60%)}
+.source-grid article{background:#0b0614e6}
+.auth-card{background:#0b0614f0}
