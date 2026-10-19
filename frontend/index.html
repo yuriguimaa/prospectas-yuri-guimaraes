@@ -7,7 +7,7 @@
   <meta name="description" content="Encontre e organize contatos profissionais públicos por área e localidade no Brasil.">
   <title>Prospectas Yuri Guimaraes — contatos com fonte</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=15">
+  <link rel="stylesheet" href="styles.css?v=16">
 </head>
 <body>
   <div id="auth-gate" class="auth-gate" hidden>
@@ -54,12 +54,12 @@
           <div class="pagination"><button id="prev-btn" class="outline" disabled>← Anterior</button><span id="page-label">Página 1</span><button id="next-btn" class="outline" disabled>Próxima →</button></div>
         </section>
         <section class="import-card" id="importar"><div><span class="overline">SUA BASE / CSV</span><h2>Já tem uma planilha pública?</h2><p>Você também pode importar seus contatos em CSV. O arquivo fica neste navegador; apenas os leads que você salvar são enviados ao seu banco de dados.</p><div class="import-links"><a href="modelo.csv" download>↓ Baixar modelo CSV</a><span>Colunas: nome, categoria, cidade, uf, telefone, email, fonte, site</span></div></div><label class="upload"><input type="file" id="csv-file" accept=".csv,text/csv"><span>⇧</span><strong>Selecionar arquivo CSV</strong><small id="import-count">Até 10 MB • UTF-8</small></label></section>
-        <section class="saved-card" id="salvos"><div><span class="overline">SUA LISTA</span><h2>Meus leads salvos <span id="saved-count">0</span></h2><p>Os contatos desta lista ficam no banco de dados e aparecem quando você entra em outro dispositivo.</p></div><div class="saved-toolbar"><input id="saved-search" type="search" placeholder="Buscar nos seus leads (nome, cidade, categoria…)" autocomplete="off" aria-label="Buscar nos leads salvos"><button id="saved-export" class="outline" type="button" disabled>↓ Exportar meus leads</button></div><div id="saved-list" class="saved-list"></div><p id="saved-status" class="saved-status">Carregando seus leads…</p></section>
+        <section class="saved-card" id="salvos"><div><span class="overline">SUA LISTA</span><h2>Meus leads salvos <span id="saved-count">0</span></h2><p>Acompanhe cada contato: marque a etapa, anote o que foi conversado e filtre pelo funil. A lista fica no banco de dados e aparece em qualquer dispositivo.</p></div><div id="pipeline-bar" class="pipeline-bar" role="group" aria-label="Filtrar por etapa" hidden></div><p id="pipeline-setup" class="pipeline-setup" hidden>Para marcar etapas e fazer anotações, o administrador precisa executar <code>supabase/pipeline.sql</code> no Supabase.</p><div class="saved-toolbar"><input id="saved-search" type="search" placeholder="Buscar nos seus leads (nome, cidade, categoria…)" autocomplete="off" aria-label="Buscar nos leads salvos"><button id="saved-export" class="outline" type="button" disabled>↓ Exportar meus leads</button></div><div id="saved-list" class="saved-list"></div><p id="saved-status" class="saved-status">Carregando seus leads…</p></section>
         <section class="sources" id="fontes"><div><span class="overline">TRANSPARÊNCIA</span><h2>Origem dos dados</h2></div><div class="source-grid"><article><span class="source-no">01</span><h3>CNES</h3><p>Estabelecimentos de saúde cadastrados pelo Ministério da Saúde. Busca por UF, com página de resultados atualizada ao consultar.</p><a href="https://apidadosabertos.saude.gov.br/" target="_blank" rel="noopener">Ver fonte ↗</a></article><article><span class="source-no">02</span><h3>SINTEGRA Brasil</h3><p>Busca gratuita de empresas por atividade CNAE, região e cidade. Exige sua chave gratuita; os dados têm origem cadastral e não confirmam registro profissional individual.</p><a href="https://www.sintegrabrasil.com.br/api" target="_blank" rel="noopener">Ver API ↗</a></article><article><span class="source-no">03</span><h3>OpenCNPJ</h3><p>Consulta gratuita por CNPJ para telefone e e-mail empresariais, quando cadastrados.</p><a href="https://opencnpj.com/api" target="_blank" rel="noopener">Ver API ↗</a></article></div></section>
         <footer>Prospectas Yuri Guimaraes <span>Dados públicos exigem revisão antes do contato. © 2026</span></footer>
       </div>
     </main>
   </div>
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

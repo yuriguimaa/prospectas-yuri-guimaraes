@@ -6,7 +6,7 @@ const json = (body,status=200) => response(JSON.stringify(body),'application/jso
 const publicAppOrigin='https://prospectas-yuri-guimaraes.yuryguimaa.workers.dev';
 function corsHeaders(request){
   const origin=request.headers.get('origin');
-  if(origin===publicAppOrigin)return {'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type','access-control-allow-methods':'GET, POST, DELETE, OPTIONS','vary':'Origin'};
+  if(origin===publicAppOrigin)return {'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type','access-control-allow-methods':'GET, POST, PATCH, DELETE, OPTIONS','vary':'Origin'};
   return {};
 }
 function cors(request,res){
@@ -17,16 +17,44 @@ function sameOrigin(request){
   const origin=request.headers.get('origin');
   return !origin||origin===new URL(request.url).origin||origin===publicAppOrigin;
 }
+const LEAD_STATUSES=['novo','contatado','negociando','fechado','perdido'];
 function clean(value,max){return typeof value==='string'?value.trim().slice(0,max):''}
 function safeHttp(value){try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)?url.href:''}catch{return ''}}
 async function savedLeads(request,env,user,url){
   if(!env.SUPABASE_URL||!env.SUPABASE_SECRET_KEY)return json({error:'Banco de dados ainda não configurado'},503);
-  if(!['GET','POST','DELETE'].includes(request.method))return json({error:'Método inválido'},405);
+  if(!['GET','POST','PATCH','DELETE'].includes(request.method))return json({error:'Método inválido'},405);
   if(request.method!=='GET'&&!sameOrigin(request))return json({error:'Origem inválida'},403);
   const base=String(env.SUPABASE_URL).replace(/\/$/,'')+'/rest/v1/saved_leads';
   const headers={'apikey':String(env.SUPABASE_SECRET_KEY).trim(),'Accept':'application/json','User-Agent':'ProspectasYuriGuimaraes/1.0 (server)'};
   let target=base,body;
-  if(request.method==='GET')target+='?select=record_key,name,category,city,uf,phone,email,source,source_url,site,created_at&owner_id=eq.'+encodeURIComponent(user.id)+'&order=created_at.desc&limit=500';
+  const baseSelect='record_key,name,category,city,uf,phone,email,source,source_url,site,created_at';
+  if(request.method==='GET'){
+    const query=sel=>base+'?select='+sel+'&owner_id=eq.'+encodeURIComponent(user.id)+'&order=created_at.desc&limit=1000';
+    try{
+      let upstream=await fetch(query(baseSelect+',status,notes,updated_at'),{headers,signal:AbortSignal.timeout(12000)});
+      let pipeline='1';
+      if(!upstream.ok){
+        const detail=await upstream.text();
+        // Colunas de etapa ainda não criadas (supabase/pipeline.sql): devolve a lista sem elas.
+        if(!/42703|status|notes|updated_at/.test(detail))return json({error:'Não foi possível acessar os leads salvos',upstreamStatus:upstream.status},502);
+        upstream=await fetch(query(baseSelect),{headers,signal:AbortSignal.timeout(12000)});pipeline='0';
+        if(!upstream.ok)return json({error:'Não foi possível acessar os leads salvos',upstreamStatus:upstream.status},502);
+      }
+      return response(await upstream.text(),'application/json; charset=utf-8',200,{'cache-control':'no-store','x-pipeline-ready':pipeline,'access-control-expose-headers':'x-pipeline-ready'});
+    }catch{return json({error:'Banco de dados indisponível'},502)}
+  }
+  if(request.method==='PATCH'){
+    let data;
+    try{data=await request.json()}catch{return json({error:'Dados inválidos'},400)}
+    const recordKey=clean(data.recordKey,150);
+    if(!recordKey)return json({error:'Lead inválido'},400);
+    const patch={updated_at:new Date().toISOString()};
+    if(data.status!==undefined){if(!LEAD_STATUSES.includes(data.status))return json({error:'Etapa inválida'},400);patch.status=data.status}
+    if(data.notes!==undefined)patch.notes=clean(data.notes,2000);
+    if(Object.keys(patch).length<2)return json({error:'Nada para atualizar'},400);
+    target+='?owner_id=eq.'+encodeURIComponent(user.id)+'&record_key=eq.'+encodeURIComponent(recordKey);
+    headers['content-type']='application/json';headers.Prefer='return=minimal';body=JSON.stringify(patch);
+  }
   if(request.method==='POST'){
     let data;
     try{data=await request.json()}catch{return json({error:'Dados inválidos'},400)}
@@ -49,7 +77,7 @@ async function savedLeads(request,env,user,url){
       const reason=/browser/i.test(detail)?'browser_block':/invalid api key/i.test(detail)?'invalid_key':/permission|privilege|forbidden/i.test(detail)?'access_denied':'upstream_error';
       return json({error:'Não foi possível acessar os leads salvos',upstreamStatus:upstream.status,reason},502);
     }
-    return request.method==='DELETE'?json({ok:true}):response(await upstream.text(),'application/json; charset=utf-8',200,{'cache-control':'no-store'});
+    return ['DELETE','PATCH'].includes(request.method)?json({ok:true}):response(await upstream.text(),'application/json; charset=utf-8',200,{'cache-control':'no-store'});
   }catch{return json({error:'Banco de dados indisponível'},502)}
 }
 async function supabaseUser(request,env){

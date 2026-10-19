@@ -9,6 +9,7 @@ Este pacote contém o código do site, backend e arquivos da hospedagem Cloudfla
 - `cloudflare/`: landing pública e a cópia estática da aplicação para Cloudflare Workers.
 - `supabase/schema.sql`: tabela de leads e regras de acesso por usuário.
 - `supabase/admin-role.sql`: regra para definir o administrador pelo e-mail.
+- `supabase/pipeline.sql`: etapas (novo, contatado, negociando, fechado, perdido) e anotações dos leads salvos. Rode uma vez no SQL Editor; sem ele, a plataforma funciona mas esconde etapas e anotações.
 - `.env.example`: nomes das variáveis que precisam ser cadastradas no servidor.
 
 ## Para continuar no Claude

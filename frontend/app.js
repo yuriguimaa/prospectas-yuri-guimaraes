@@ -27,6 +27,10 @@ const state={rows:[],imported:[],page:0,mode:'',query:null,total:null,hasMore:fa
 const contactCache=new Map();
 const savedKeys=new Set();
 let savedRows=[];
+let pipelineReady=true;
+let statusFilter='';
+const STATUSES=[['novo','Novo'],['contatado','Contatado'],['negociando','Negociando'],['fechado','Fechado'],['perdido','Perdido']];
+const statusLabel=v=>(STATUSES.find(s=>s[0]===v)||STATUSES[0])[1];
 let contactPauseUntil=0;
 let searchGeneration=0;
 const categoryNames={saude:'Saúde',advocacia:'Advocacia',engenharia:'Engenharia',contabilidade:'Contabilidade',outra:'Outra'};
@@ -43,19 +47,52 @@ async function loadSaved(){
   try{
     const res=await api('/api/leads',{headers:{Accept:'application/json'}});
     if(!res.ok)throw Error('Não foi possível carregar seus leads.');
+    pipelineReady=res.headers.get('x-pipeline-ready')!=='0';
     savedRows=await res.json();
     savedKeys.clear();for(const row of savedRows)savedKeys.add(row.record_key);
     renderSaved();if(state.mode)show(state.rows);
   }catch(error){$('saved-status').textContent=error.message||'Banco de dados indisponível.'}
 }
+function filteredSaved(){
+  const term=normalize($('saved-search').value);
+  return savedRows.filter(r=>(!statusFilter||(r.status||'novo')===statusFilter)&&(!term||normalize([r.name,r.category,r.city,r.uf,r.phone,r.email,r.notes].join(' ')).includes(term)));
+}
+function renderPipeline(){
+  const bar=$('pipeline-bar');bar.replaceChildren();bar.hidden=!savedRows.length;
+  $('pipeline-setup').hidden=pipelineReady||!savedRows.length;
+  const counts={};for(const r of savedRows){const k=r.status||'novo';counts[k]=(counts[k]||0)+1}
+  for(const [value,label] of [['','Todos'],...STATUSES]){
+    const b=document.createElement('button');b.type='button';b.className='pipeline-chip'+(value?' status-'+value:'')+(statusFilter===value?' active':'');
+    const n=value?counts[value]||0:savedRows.length;b.textContent=label+' ';const c=document.createElement('span');c.textContent=String(n);b.append(c);
+    b.setAttribute('aria-pressed',String(statusFilter===value));
+    b.addEventListener('click',()=>{statusFilter=value;renderSaved()});bar.append(b);
+  }
+}
+async function updateLead(row,patch,feedback){
+  const previous={status:row.status,notes:row.notes};Object.assign(row,patch);
+  if(feedback){feedback.textContent='Salvando…';feedback.className='note-feedback'}
+  try{
+    const res=await api('/api/leads',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({recordKey:row.record_key,...patch})});
+    if(!res.ok)throw Error();
+    if(feedback){feedback.textContent='Salvo ✓';feedback.className='note-feedback ok'}
+    return true;
+  }catch{
+    Object.assign(row,previous);
+    if(feedback){feedback.textContent='Não foi possível salvar';feedback.className='note-feedback error'}
+    else $('saved-status').textContent='Não foi possível atualizar o lead. Tente novamente.';
+    return false;
+  }
+}
 function renderSaved(){
   const list=$('saved-list');list.replaceChildren();$('saved-count').textContent=String(savedRows.length);
-  const term=normalize($('saved-search').value);
-  const rows=term?savedRows.filter(r=>normalize([r.name,r.category,r.city,r.uf,r.phone,r.email].join(' ')).includes(term)):savedRows;
+  renderPipeline();
+  const rows=filteredSaved();
   $('saved-export').disabled=!rows.length;
-  $('saved-status').textContent=!savedRows.length?'Você ainda não salvou nenhum lead.':!rows.length?'Nenhum lead salvo corresponde à busca.':'';
+  $('saved-status').textContent=!savedRows.length?'Você ainda não salvou nenhum lead.':!rows.length?'Nenhum lead salvo corresponde ao filtro.':'';
   for(const row of rows){
-    const item=document.createElement('article');item.className='saved-item';
+    const status=row.status||'novo';
+    const item=document.createElement('article');item.className='saved-item status-'+status;
+    const top=document.createElement('div');top.className='saved-top';
     const details=document.createElement('div');const name=document.createElement('strong');name.textContent=row.name;
     const info=document.createElement('small');info.textContent=[row.category,row.city,row.uf].filter(Boolean).join(' · ');
     const contact=document.createElement('small');
@@ -64,14 +101,31 @@ function renderSaved(){
     if(row.email)setLink(contact,'✉ '+row.email,'mailto:'+row.email);
     if(row.created_at){const d=new Date(row.created_at);if(!isNaN(d)){const span=document.createElement('span');span.className='saved-date';span.textContent=(contact.childNodes.length?' · ':'')+'salvo em '+d.toLocaleDateString('pt-BR');contact.append(span)}}
     details.append(name,info,contact);
-    const actions=document.createElement('div');actions.className='saved-actions';addWhatsapp(actions,row.phone);
+    const actions=document.createElement('div');actions.className='saved-actions';
+    if(pipelineReady){
+      const select=document.createElement('select');select.className='status-select status-'+status;select.setAttribute('aria-label','Etapa do lead '+row.name);
+      for(const [value,label] of STATUSES){const o=document.createElement('option');o.value=value;o.textContent=label;o.selected=value===status;select.append(o)}
+      select.addEventListener('change',async()=>{select.disabled=true;await updateLead(row,{status:select.value});renderSaved()});
+      actions.append(select);
+    }
+    addWhatsapp(actions,row.phone);
     const remove=document.createElement('button');remove.type='button';remove.className='save-lead';remove.textContent='Remover';
     remove.addEventListener('click',()=>removeSaved(row.record_key,remove));actions.append(remove);
-    item.append(details,actions);list.append(item);
+    top.append(details,actions);item.append(top);
+    if(pipelineReady){
+      const notes=document.createElement('div');notes.className='saved-notes';
+      const area=document.createElement('textarea');area.rows=1;area.maxLength=2000;area.placeholder='Anotações: o que foi conversado, próximo passo, melhor horário…';area.value=row.notes||'';area.setAttribute('aria-label','Anotações sobre '+row.name);
+      const feedback=document.createElement('span');feedback.className='note-feedback';
+      const grow=()=>{area.style.height='auto';area.style.height=Math.min(area.scrollHeight,160)+'px'};
+      area.addEventListener('input',()=>{grow();feedback.textContent='';});
+      area.addEventListener('blur',()=>{if(area.value!==(row.notes||''))updateLead(row,{notes:area.value},feedback)});
+      notes.append(area,feedback);item.append(notes);requestAnimationFrame(grow);
+    }
+    list.append(item);
   }
 }
 $('saved-search').addEventListener('input',renderSaved);
-$('saved-export').addEventListener('click',()=>{const term=normalize($('saved-search').value);const rows=term?savedRows.filter(r=>normalize([r.name,r.category,r.city,r.uf,r.phone,r.email].join(' ')).includes(term)):savedRows;const keys=['name','category','city','uf','phone','email','site','source','source_url','created_at'];const labels=['nome','categoria','cidade','uf','telefone','email','site','fonte','url_fonte','salvo_em'];const csv='\uFEFF'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(k==='created_at'&&r[k]?new Date(r[k]).toLocaleDateString('pt-BR'):r[k])).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-meus-leads.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
+$('saved-export').addEventListener('click',()=>{const rows=filteredSaved();const keys=['name','category','city','uf','phone','email','status','notes','site','source','source_url','created_at'];const labels=['nome','categoria','cidade','uf','telefone','email','etapa','anotacoes','site','fonte','url_fonte','salvo_em'];const fmt=(r,k)=>k==='created_at'&&r[k]?new Date(r[k]).toLocaleDateString('pt-BR'):k==='status'?statusLabel(r.status||'novo'):r[k];const csv='﻿'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(fmt(r,k))).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-meus-leads.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
 async function removeSaved(recordKey,button){
   button.disabled=true;
   try{const res=await api('/api/leads?recordKey='+encodeURIComponent(recordKey),{method:'DELETE'});if(!res.ok)throw Error();await loadSaved()}
