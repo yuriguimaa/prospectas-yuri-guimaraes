@@ -277,6 +277,30 @@ function partnersFromApi(list){
     return {nome,cargo,decisor:DECISORES.has(qualCode)||/administrador|diretor|presidente|titular|gerente/i.test(cargo),desde:String(p.data_entrada_sociedade||p.data_entrada||'').slice(0,10),tipo:'PF'};
   }).filter(Boolean);
 }
+
+// Google Maps via treg (crawl4ai.google.serp.maps): sem conta no Google, cobrado do saldo do treg.
+// Uma chamada traz até 60 lugares (preço fixo por chamada); a paginação de 20 em 20 é feita aqui, do cache.
+function nationalPhone(v){const d=String(v||'').replace(/\D/g,'').replace(/^55(?=\d{10,11}$)/,'');if(d.length===11)return '('+d.slice(0,2)+') '+d.slice(2,7)+'-'+d.slice(7);if(d.length===10)return '('+d.slice(0,2)+') '+d.slice(2,6)+'-'+d.slice(6);return String(v||'')}
+async function mapsViaTreg(env,user,url){
+  const q=clean(url.searchParams.get('q'),80),city=clean(url.searchParams.get('cidade'),80),uf=(url.searchParams.get('uf')||'').toUpperCase();
+  const offset=Math.max(0,Math.min(40,Number(url.searchParams.get('page')||0)||0));
+  if(q.length<2||(uf&&!Object.hasOwn(ufCodes,uf)))return json({error:'Informe o que procurar (ex.: clínica odontológica) e a região'},400);
+  if(offset===0){const limited=rateLimit(user.id,'maps',30);if(limited)return limited}
+  const location=[city,uf,'Brasil'].filter(Boolean).join(', ');
+  const data=await cached('treg-maps:'+q+'|'+location,86400,async()=>{
+    const res=await fetchReliable('https://treg.to/call/crawl4ai.google.serp.maps',{method:'POST',headers:{'content-type':'application/json','X-Treg-Token':String(env.TREG_TOKEN).trim()},body:JSON.stringify({query:q,location,limit:60})});
+    if(!res.ok){const t=await res.text();console.log(JSON.stringify({event:'treg_maps_error',status:res.status,detail:t.slice(0,300)}));return {error:res.status}}
+    const body=await res.json();
+    return {rows:Array.isArray(body.rows)?body.rows:[],cost:res.headers.get('x-treg-cost-micro')||''};
+  });
+  if(!data||data.error){const st=data&&data.error;return json({error:st===401||st===403?'Chave do treg inválida ou sem permissão':st===402?'Saldo do treg esgotado. Recarregue em treg.to.':st===429?'Muitas buscas seguidas no treg. Tente em 1 minuto.':'Busca no Google Maps indisponível no momento'},st===402?402:st===429?429:502)}
+  const places=data.rows.map(r=>{
+    const m=String(r.address||'').match(/,\s*([^,]+?)\s*-\s*([A-Z]{2}),\s*\d{5}-?\d{3}/);
+    return {id:r.place_id||r.cid||r.name,name:r.name||'',category:r.category||'',address:String(r.address||'').replace(/,\s*(Brazil|Brasil)$/,''),city:m?m[1]:'',uf:m?m[2]:'',phone:nationalPhone(r.phone),site:r.website||'',rating:r.rating||null,reviews:r.review_count||0,mapsUrl:r.url||'',temporarilyClosed:false};
+  });
+  const slice=places.slice(offset,offset+20);
+  return json({places:slice,nextPage:offset+20<places.length?String(offset+20):'',total:places.length,source:'treg'});
+}
 export default {
   async fetch(request,env={}) {
     const url = new URL(request.url);
@@ -326,7 +350,8 @@ export default {
     }
     if(url.pathname==='/api/maps'){
       if(request.method!=='GET')return cors(request,json({error:'Método inválido'},405));
-      if(!env.GOOGLE_MAPS_API_KEY)return cors(request,json({error:'Busca no Google Maps ainda não configurada',code:'maps_not_configured'},503));
+      if(!env.TREG_TOKEN&&!env.GOOGLE_MAPS_API_KEY)return cors(request,json({error:'Busca no Google Maps ainda não configurada',code:'maps_not_configured'},503));
+      if(env.TREG_TOKEN)return cors(request,await mapsViaTreg(env,user,url));
       const q=clean(url.searchParams.get('q'),80),city=clean(url.searchParams.get('cidade'),80),uf=(url.searchParams.get('uf')||'').toUpperCase(),pageToken=clean(url.searchParams.get('page'),600);
       if(q.length<2||(uf&&!Object.hasOwn(ufCodes,uf)))return cors(request,json({error:'Informe o que procurar (ex.: clínica odontológica) e a região'},400));
       const limited=rateLimit(user.id,'maps',30);if(limited)return cors(request,limited);
