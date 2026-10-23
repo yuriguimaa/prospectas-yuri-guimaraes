@@ -43,6 +43,7 @@ Todas as rotas exigem login (token do Supabase), exceto `/api/auth/*`.
 | `GET /api/cnpj?cnpj=...` (ou `/api/contato`) | Dados de um CNPJ juntando OpenCNPJ → BrasilAPI → CNPJ.ws: telefones, e-mail, endereço, situação, atividades. |
 | `POST /api/empresas?cnae=...&uf=...&municipio=...` | Busca de empresas na SINTEGRA Brasil (chave do usuário no corpo). |
 | `GET /api/maps?q=dentista&cidade=Porto Alegre&uf=RS&page=` | Estabelecimentos do Google Maps (Places API oficial, Text Search): nome, endereço, telefone, site, nota e avaliações; 20 por página, até 60. Usa o treg (`TREG_TOKEN`, secret no Cloudflare; uma chamada traz até 60 lugares, ~US$ 0,00015) ou, se não houver, a Places API do Google (`GOOGLE_MAPS_API_KEY`). |
+| `GET /api/site-contatos?url=...` | Lê o site da empresa (página inicial e até 3 páginas de contato/sobre) e devolve e-mails publicados, Instagram, Facebook, LinkedIn e WhatsApp. Bloqueia IPs, localhost e portas não padrão. Cache de 7 dias. |
 | `GET /api/socios?cnpj=...` | Sócios e decisores da empresa (Receita Federal, Dados Abertos CNPJ). `/api/cnpj` também já devolve `partners`. |
 | `GET/POST/PATCH/DELETE /api/leads` | Leads salvos do usuário (etapa e anotações via PATCH). |
 
@@ -64,3 +65,9 @@ Precisa só do Node.js 18 ou mais novo (não tem dependências).
 2. Rode `npm run dev` e abra `http://localhost:8787` (landing) ou `http://localhost:8787/app/` (aplicação).
 
 `npm run build` gera `dist/worker.js` (backend com o site embutido) para publicar no Cloudflare Workers.
+
+## Créditos
+
+A extração de e-mails e redes sociais do site da empresa (`/api/site-contatos`) foi adaptada do
+[Google Maps Scraper Kit](https://github.com/Mahanaicoach/google-maps-scraper-kit), © 2026 Mahan, licença MIT.
+O motor de raspagem do kit (gosom/google-maps-scraper) não faz parte deste projeto: a busca no Google Maps usa o treg.

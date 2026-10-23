@@ -198,3 +198,12 @@ body{background:transparent}
 .maps-card::before{content:"";position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,#8b5cf633,transparent 70%);pointer-events:none}
 #maps-btn{background:linear-gradient(135deg,#a78bfa,#7c3aed 55%,#5b21b6);color:#fff;border:0;border-radius:8px;padding:12px 17px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 0 0 1px #c4a5ff40,0 8px 28px #7c3aed55;cursor:pointer}
 #maps-btn:disabled{opacity:.6}
+/* Mensagem pronta do WhatsApp */
+.wa-template{margin-top:14px;border:1px solid var(--rim);border-radius:10px;background:#05020a;padding:10px 14px}
+.wa-template summary{cursor:pointer;color:var(--plasma);font-size:12px;font-weight:600}
+.wa-template p{margin:8px 0}
+.wa-template textarea{width:100%;resize:vertical;border:1px solid var(--rim);border-radius:8px;background:#000;color:var(--ink);padding:9px 11px;font:inherit;font-size:12px;line-height:1.5}
+.wa-template textarea:focus{outline:none;border-color:var(--violet);box-shadow:0 0 0 3px #8b5cf633}
+.wa-template-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--faint)}
+.wa-template-row em{color:var(--dim);font-style:normal}
+.wa-template small{color:#86efac;font-size:10px}

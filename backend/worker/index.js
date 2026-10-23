@@ -301,6 +301,87 @@ async function mapsViaTreg(env,user,url){
   const slice=places.slice(offset,offset+20);
   return json({places:slice,nextPage:offset+20<places.length?String(offset+20):'',total:places.length,source:'treg'});
 }
+
+// ---------- Contatos publicados no site da empresa (e-mail, redes, WhatsApp) ----------
+// Lógica adaptada do Google Maps Scraper Kit (github.com/Mahanaicoach/google-maps-scraper-kit, MIT):
+// página inicial + até 3 páginas de contato/sobre, e-mails do domínio do site primeiro, lixo descartado.
+const SITE_EMAIL_RE=/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const SITE_MAILTO_RE=/mailto:([^"'>\s?]+)/gi;
+const SITE_HREF_RE=/<a\s[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+const JUNK_EXT=['.png','.jpg','.jpeg','.gif','.svg','.webp','.css','.js'];
+const JUNK_DOMAIN=['example','sentry','wixpress','wix.com','godaddy','squarespace','wordpress','domain.com','email.com','yourdomain','schema.org','w3.org','dominio.com','seudominio','seuemail','email.com.br'];
+const JUNK_LOCAL=new Set(['name','email','user','you','someone','seuemail','nome','usuario','exemplo']);
+const SOCIAL_RES={instagram:/https?:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9_.]+)/i,facebook:/https?:\/\/(?:www\.|pt-br\.|m\.)?facebook\.com\/([A-Za-z0-9_.\-]+)/i,linkedin:/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in)\/([A-Za-z0-9_\-%]+)/i};
+const SKIP_HANDLE=new Set(['p','reel','reels','explore','accounts','sharer','share','sharer.php','tr','plugins','dialog','login','home','watch','groups','events','pages','profile.php','intent','hashtag']);
+const WA_RE=/(?:wa\.me\/|api\.whatsapp\.com\/send\/?\?phone=|whatsapp\.com\/send\/?\?phone=|web\.whatsapp\.com\/send\?phone=)\+?(\d{10,13})/i;
+function siteHost(u){try{const h=new URL(/^https?:\/\//i.test(u)?u:'http://'+u).hostname.toLowerCase();return h.startsWith('www.')?h.slice(4):h}catch{return ''}}
+function publicSiteUrl(raw){
+  let u;try{u=new URL(/^https?:\/\//i.test(raw)?raw:'https://'+raw)}catch{return null}
+  if(!['http:','https:'].includes(u.protocol)||u.username||u.password)return null;
+  const h=u.hostname.toLowerCase();
+  if(!h.includes('.')||h==='localhost'||/\.(local|internal|lan|home|test|localhost)$/.test(h))return null;
+  if(/^\d+\.\d+\.\d+\.\d+$/.test(h)||h.includes(':'))return null; // sem IP direto (evita acesso a redes internas)
+  if(u.port&&!['80','443'].includes(u.port))return null;
+  return u;
+}
+async function fetchSiteHtml(url){
+  try{
+    const res=await fetch(url,{headers:{'user-agent':'Mozilla/5.0 (compatible; ProspectasBot/1.0; +https://prospectayuriguimaraes.yuryguimaa.workers.dev)','accept':'text/html'},redirect:'follow',signal:AbortSignal.timeout(8000)});
+    if(!res.ok||!/text\/html|application\/xhtml/i.test(res.headers.get('content-type')||''))return '';
+    const reader=res.body.getReader();let total=0;const chunks=[];
+    while(total<400000){const {done,value}=await reader.read();if(done)break;chunks.push(value);total+=value.length}
+    try{reader.cancel()}catch{}
+    const all=new Uint8Array(total);let off=0;for(const c of chunks){all.set(c.subarray(0,Math.min(c.length,total-off)),off);off+=c.length;if(off>=total)break}
+    return new TextDecoder('utf-8',{fatal:false}).decode(all);
+  }catch{return ''}
+}
+function extractSiteEmails(html,host){
+  const found=[];
+  const cands=[...String(html||'').matchAll(SITE_MAILTO_RE)].map(m=>m[1]).concat(String(html||'').match(SITE_EMAIL_RE)||[]);
+  for(let e of cands){
+    try{e=decodeURIComponent(e)}catch{}
+    e=e.trim().toLowerCase();
+    const at=e.lastIndexOf('@');const local=e.slice(0,at),dom=e.slice(at+1);
+    if(!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)||JUNK_EXT.some(x=>e.endsWith(x))||JUNK_LOCAL.has(local)||JUNK_DOMAIN.some(j=>dom.includes(j))||found.includes(e))continue;
+    found.push(e);
+  }
+  const onSite=e=>host&&(e.endsWith('@'+host)||e.endsWith('.'+host));
+  return found.sort((a,b)=>Number(!onSite(a))-Number(!onSite(b))).slice(0,3);
+}
+function contactPageUrls(html,base){
+  const host=siteHost(base.href),out=[];
+  for(const m of String(html||'').matchAll(SITE_HREF_RE)){
+    if(!/contat|contact|fale|sobre|about|quem-somos|atendimento/i.test(m[1]+' '+m[2]))continue;
+    try{const u=new URL(m[1].trim(),base);u.hash='';if(['http:','https:'].includes(u.protocol)&&siteHost(u.href)===host&&!out.includes(u.href))out.push(u.href)}catch{}
+    if(out.length>=3)break;
+  }
+  for(const path of ['/contato','/fale-conosco','/sobre','/contact']){if(out.length>=3)break;const u=new URL(path,base).href;if(!out.includes(u))out.push(u)}
+  return out.slice(0,3);
+}
+function extractSocials(html){
+  const out={instagram:'',facebook:'',linkedin:''};
+  for(const [plat,rx] of Object.entries(SOCIAL_RES)){
+    const g=new RegExp(rx.source,'gi');let m;
+    while((m=g.exec(String(html||'')))){const h=m[1].toLowerCase();if(SKIP_HANDLE.has(h)||(plat==='facebook'&&(/^\d+$/.test(h)||h.length<3)))continue;out[plat]=m[0].replace(/["'\/\\]+$/,'');break}
+  }
+  return out;
+}
+function extractWhatsapp(text){const m=String(text||'').match(WA_RE);if(!m)return '';let d=m[1];if(d.length<=11)d='55'+d;return /^55\d{10,11}$/.test(d)?d:''}
+async function siteContacts(rawUrl){
+  const url=publicSiteUrl(rawUrl);
+  if(!url)return {error:'Endereço de site inválido',status:400};
+  const host=siteHost(url.href);
+  if(/(^|\.)(instagram\.com|facebook\.com|linktr\.ee|wa\.me|whatsapp\.com|doctoralia\.com\.br|wixsite\.com)$/.test(host)){
+    const social=extractSocials(url.href);return {data:{site:url.href,emails:[],...social,whatsapp:extractWhatsapp(url.href),checked:1}};
+  }
+  return {data:await cached('site:'+host+url.pathname,86400*7,async()=>{
+    const home=await fetchSiteHtml(url.href);
+    let emails=extractSiteEmails(home,host),pagesHtml='';
+    if(home&&!emails.length){pagesHtml=(await Promise.all(contactPageUrls(home,url).map(fetchSiteHtml))).join('\n');emails=extractSiteEmails(pagesHtml,host)}
+    const social=extractSocials(home+pagesHtml);
+    return {site:url.href,emails,...social,whatsapp:extractWhatsapp(home)||extractWhatsapp(pagesHtml),checked:home?(pagesHtml?4:1):0};
+  })};
+}
 export default {
   async fetch(request,env={}) {
     const url = new URL(request.url);
@@ -366,6 +447,15 @@ export default {
       const comp=(p,type)=>{const c=(p.addressComponents||[]).find(c=>(c.types||[]).includes(type));return c?(type==='administrative_area_level_1'?c.shortText:c.longText):''};
       const places=(data.places||[]).filter(p=>p.businessStatus!=='CLOSED_PERMANENTLY').map(p=>({id:p.id,name:p.displayName&&p.displayName.text||'',category:p.primaryTypeDisplayName&&p.primaryTypeDisplayName.text||'',address:p.formattedAddress||'',city:comp(p,'administrative_area_level_2'),uf:comp(p,'administrative_area_level_1'),phone:p.nationalPhoneNumber||'',site:p.websiteUri||'',rating:p.rating||null,reviews:p.userRatingCount||0,mapsUrl:p.googleMapsUri||'',temporarilyClosed:p.businessStatus==='CLOSED_TEMPORARILY'}));
       return cors(request,json({places,nextPage:data.nextPageToken||''}));
+    }
+    if(url.pathname==='/api/site-contatos'){
+      if(request.method!=='GET')return cors(request,json({error:'Método inválido'},405));
+      const site=clean(url.searchParams.get('url'),300);
+      if(!site)return cors(request,json({error:'Informe o site'},400));
+      const limited=rateLimit(user.id,'site',60);if(limited)return cors(request,limited);
+      const result=await siteContacts(site);
+      if(result.error)return cors(request,json({error:result.error},result.status));
+      return cors(request,json(result.data));
     }
     if(url.pathname==='/api/municipios'){
       const uf=(url.searchParams.get('uf')||'').toUpperCase();

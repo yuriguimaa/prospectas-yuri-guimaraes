@@ -53,8 +53,28 @@ function normalize(s){return String(s??'').normalize('NFD').replace(/[\u0300-\u0
 function first(o,keys){for(const k of keys){const v=o?.[k];if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim()}return ''}
 function setStatus(title,detail,kind='empty'){const s=$('status');s.className='status '+kind;s.replaceChildren();const icon=document.createElement('div');icon.className='status-icon';icon.textContent=kind==='error'?'!':'⌕';const strong=document.createElement('strong');strong.textContent=title;const span=document.createElement('span');span.textContent=detail;s.append(icon,strong,span);s.hidden=false}
 function safeUrl(s){try{const u=new URL(s);return ['http:','https:'].includes(u.protocol)?u.href:''}catch{return ''}}
-function whatsappUrl(phone){let d=String(phone||'').replace(/\D/g,'');if(d.startsWith('0'))d=d.replace(/^0+/,'');if(d.length===10||d.length===11)d='55'+d;return /^55\d{10,11}$/.test(d)?'https://wa.me/'+d:''}
-function addWhatsapp(parent,phone){const url=whatsappUrl(phone);if(!url)return;const a=document.createElement('a');a.className='whatsapp';a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='WhatsApp';a.title='Abrir conversa no WhatsApp';parent.append(a)}
+const WA_TEMPLATE_KEY='prospectas_wa_template_v1';
+const WA_TEMPLATE_DEFAULT='Olá! Tudo bem? Encontrei a {nome} e gostaria de apresentar um serviço que pode ajudar vocês. Posso falar com o responsável?';
+function waTemplate(){try{return localStorage.getItem(WA_TEMPLATE_KEY)||WA_TEMPLATE_DEFAULT}catch{return WA_TEMPLATE_DEFAULT}}
+function fillTemplate(t,lead){const nome=String(lead?.name||'').split('|')[0].trim();return t.replace(/\{nome\}/gi,nome||'sua empresa').replace(/\{cidade\}/gi,lead?.city||'').replace(/\{categoria\}/gi,String(lead?.category||'').toLowerCase()).replace(/\s{2,}/g,' ').trim()}
+function whatsappUrl(phone,lead){let d=String(phone||'').replace(/\D/g,'');if(d.startsWith('0'))d=d.replace(/^0+/,'');if(d.length===10||d.length===11)d='55'+d;if(!/^55\d{10,11}$/.test(d))return '';const text=lead?fillTemplate(waTemplate(),lead):'';return 'https://wa.me/'+d+(text?'?text='+encodeURIComponent(text):'')}
+function addWhatsapp(parent,phone,lead,fromSite){const url=whatsappUrl(phone,lead);if(!url)return;const a=document.createElement('a');a.className='whatsapp';a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=fromSite?'WhatsApp do site':'WhatsApp';a.title=fromSite?'Número de WhatsApp divulgado no site da empresa':'Abrir conversa no WhatsApp com a mensagem pronta';parent.append(a)}
+function addSocials(parent,r){for(const [k,label] of [['instagram','Instagram'],['facebook','Facebook'],['linkedin','LinkedIn']]){const u=r.socials?.[k];if(u&&safeUrl(u)&&safeUrl(u)!==safeUrl(r.site||'')){const sp=document.createElement('span');setLink(sp,'↗ '+label,safeUrl(u));parent.append(sp)}}}
+async function loadSiteContacts(r){
+  if(!r.site||r.siteChecked||r.sitePending)return;
+  r.sitePending=true;if(state.rows.includes(r))show(state.rows);
+  try{
+    const res=await api('/api/site-contatos?url='+encodeURIComponent(r.site),{headers:{Accept:'application/json'}});
+    if(res.status===429){r.sitePending=false;return}
+    const d=res.ok?await res.json():{};
+    r.siteChecked=true;
+    if(!r.email&&Array.isArray(d.emails)&&d.emails.length){r.email=d.emails[0];r.emailFromSite=true}
+    r.socials={instagram:d.instagram||'',facebook:d.facebook||'',linkedin:d.linkedin||''};
+    if(d.whatsapp)r.whatsappSite=d.whatsapp;
+  }catch{r.siteChecked=true}
+  finally{r.sitePending=false;if(state.rows.includes(r))show(state.rows)}
+}
+async function enrichSites(rows){let next=0;async function worker(){while(state.rows===rows&&next<rows.length){const r=rows[next++];if(r.site&&!r.siteChecked)await loadSiteContacts(r)}}await Promise.all([worker(),worker(),worker()])}
 function setLink(parent,text,href){const a=document.createElement('a');a.textContent=text;a.href=href;a.target='_blank';a.rel='noopener noreferrer';parent.append(a)}
 async function loadSaved(){
   try{
@@ -121,7 +141,7 @@ function renderSaved(){
       select.addEventListener('change',async()=>{select.disabled=true;await updateLead(row,{status:select.value});renderSaved()});
       actions.append(select);
     }
-    addWhatsapp(actions,row.phone);
+    addWhatsapp(actions,row.phone,{name:row.name,city:row.city,category:row.category});
     const remove=document.createElement('button');remove.type='button';remove.className='save-lead';remove.textContent='Remover';
     remove.addEventListener('click',()=>removeSaved(row.record_key,remove));actions.append(remove);
     top.append(details,actions);item.append(top);
@@ -222,12 +242,15 @@ function show(rows){
     if(r.phone){setLink(phone,'☎ '+r.phone,'tel:'+r.phone.replace(/[^\d+]/g,''))}
     else{phone.className='missing';phone.textContent='Telefone não informado'}
     const email=document.createElement('span');
-    if(r.email){setLink(email,'✉ '+r.email,'mailto:'+r.email)}
-    else{email.className='missing';email.textContent='E-mail não informado'}
+    if(r.email){setLink(email,'✉ '+r.email,'mailto:'+r.email);if(r.emailFromSite)email.title='E-mail publicado no site da empresa'}
+    else if(r.sitePending){email.className='missing';email.textContent='Procurando e-mail no site…'}
+    else{email.className='missing';email.textContent=r.siteChecked?'E-mail não encontrado no site':'E-mail não informado'}
     meta.append(phone,email);
     for(const extra of (r.phones||[]).filter(x=>x&&x.replace(/\D/g,'')!==String(r.phone||'').replace(/\D/g,'')).slice(0,2)){const sp=document.createElement('span');setLink(sp,'☎ '+formatPhone(extra),'tel:'+extra.replace(/\D/g,''));meta.append(sp)}
-    if(r.phone)addWhatsapp(meta,r.phone);
+    if(r.whatsappSite)addWhatsapp(meta,r.whatsappSite,r,true);
+    else if(r.phone)addWhatsapp(meta,r.phone,r);
     if(r.site&&safeUrl(r.site)){const site=document.createElement('span');setLink(site,/instagram\.com/i.test(r.site)?'↗ Instagram':/facebook\.com/i.test(r.site)?'↗ Facebook':'↗ Site',safeUrl(r.site));meta.append(site)}
+    addSocials(meta,r);
     if(r.cnpj&&(!r.contactChecked||!r.phone||!r.email)){
       const btn=document.createElement('button');btn.type='button';btn.className='contact-fetch';
       btn.textContent=r.contactPending?(r.query?'Conferindo cadastro…':'Buscando contatos…'):r.contactChecked?'Sem outros contatos cadastrados':r.contactError||(r.query?'Conferir cadastro e contatos':'Buscar mais contatos pelo CNPJ');
@@ -288,7 +311,7 @@ async function searchCnpj(){
     const d=await res.json();if(generation!==searchGeneration)return;
     contactCache.set(cnpj,d);
     state.rows=[{name:d.name||d.razaoSocial||('Empresa '+formatCnpj(cnpj)),category:d.mainActivity||'Empresa',city:d.city,uf:d.uf,address:d.address,phone:d.phone?formatPhone(d.phone):'',phones:d.phones||[],email:d.email,site:'',cnpj,situacao:d.status,verified:true,contactChecked:true,recordKey:'cnpj:'+cnpj,source:d.source||'Cadastro empresarial',sourceUrl:d.sourceUrl||'',partners:Array.isArray(d.partners)?d.partners:undefined}];
-    state.mode='cnpj';state.hasMore=false;show(state.rows);
+    state.mode='cnpj';state.hasMore=false;show(state.rows);enrichSites(state.rows);
   }catch(err){
     if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
     const c=err.message;setStatus(c==='404'?'CNPJ não encontrado':c==='429'?'Limite temporário das fontes':'Não foi possível consultar o CNPJ',c==='404'?'Nenhuma das bases públicas tem esse CNPJ.':c==='429'?'Aguarde um minuto e tente novamente.':'As fontes podem estar indisponíveis. Tente novamente em instantes.','error');
@@ -378,7 +401,7 @@ async function searchMaps(){
     if(!res.ok){const e=new Error(data.error||String(res.status));e.code=data.code||res.status;throw e}
     if(generation!==searchGeneration)return;
     state.rows=(data.places||[]).map(pl=>({name:pl.name,category:pl.category||'Estabelecimento',address:pl.address,city:pl.city,uf:pl.uf,phone:pl.phone,email:'',site:pl.site,rating:pl.rating,reviews:pl.reviews,situacao:pl.temporarilyClosed?'Fechado temporariamente':'',recordKey:'gmaps:'+pl.id,source:'Google Maps',sourceUrl:pl.mapsUrl}));
-    state.mode='maps';state.mapsTokens[state.page+1]=data.nextPage||'';state.hasMore=Boolean(data.nextPage);show(state.rows);
+    state.mode='maps';state.mapsTokens[state.page+1]=data.nextPage||'';state.hasMore=Boolean(data.nextPage);show(state.rows);enrichSites(state.rows);
     if(!state.rows.length)setStatus('Nada encontrado no Google Maps','Tente outro termo (ex.: "dentista" em vez de "odontologia") ou uma região maior.');
   }catch(err){
     if(generation!==searchGeneration)return;state.rows=[];state.mode='';state.hasMore=false;show([]);
@@ -393,4 +416,10 @@ function csvParse(text){const firstLine=text.split(/\r?\n/,1)[0];const sep=(firs
 function importRows(raw){if(raw.length<2)throw Error('O arquivo precisa de cabeçalho e pelo menos uma linha.');const headers=raw[0].map(x=>normalize(x).replace(/[^a-z0-9]/g,''));const get=(row,names)=>{for(const n of names){const i=headers.indexOf(n);if(i>=0)return String(row[i]??'').trim()}return ''};if(!headers.includes('nome')&&!headers.includes('name'))throw Error('Inclua uma coluna chamada nome.');return raw.slice(1).map((row,index)=>({recordKey:'csv:'+index+':'+normalize(get(row,['nome','name','nomerazaosocial','razaosocial','nomefantasia'])).slice(0,90),name:get(row,['nome','name','nomerazaosocial','razaosocial','nomefantasia']),category:get(row,['categoria','category','profissao','segmento']),city:get(row,['cidade','municipio','city']),uf:get(row,['uf','estado']),phone:get(row,['telefone','phone','celular']),email:get(row,['email','correioeletronico']),site:get(row,['site','website','url']),source:get(row,['fonte','source'])||'CSV importado',sourceUrl:safeUrl(get(row,['urlfonte','linkfonte']))})).filter(r=>r.name)}
 $('csv-file').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024){$('import-count').textContent='Arquivo acima de 10 MB';return}try{const text=(await file.text()).replace(/^\uFEFF/,'');const rows=importRows(csvParse(text));state.imported=rows;$('import-count').textContent=rows.length+' contatos carregados';state.rows=rows;state.mode='csv';state.hasMore=false;state.page=0;show(rows);document.getElementById('results-title').scrollIntoView({behavior:'smooth'})}catch(err){$('import-count').textContent=err.message||'CSV inválido'}});
 function csvCell(v){let value=String(v??'');if(/^[\s]*[=+\-@]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"'}
-$('export-btn').addEventListener('click',()=>{const rows=($('only-contact').checked?state.rows.filter(r=>r.phone||r.email):state.rows).filter(r=>!r.exclude&&(state.mode!=='company'||r.verified));const keys=['name','category','city','uf','phone','email','socios','source','sourceUrl','site'];const labels=['nome','categoria','cidade','uf','telefone','email','socios_decisores','fonte','url_fonte','site'];for(const r of rows)r.socios=Array.isArray(r.partners)?r.partners.filter(p=>p.decisor).concat(r.partners.filter(p=>!p.decisor)).slice(0,5).map(p=>titleCase(p.nome)+' ('+p.cargo+')').join(', '):'';const csv='\uFEFF'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-yuri-guimaraes-contatos.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
+$('export-btn').addEventListener('click',()=>{const rows=($('only-contact').checked?state.rows.filter(r=>r.phone||r.email):state.rows).filter(r=>!r.exclude&&(state.mode!=='company'||r.verified));const keys=['name','category','city','uf','phone','email','whatsapp','redes','socios','source','sourceUrl','site'];const labels=['nome','categoria','cidade','uf','telefone','email','whatsapp_site','redes_sociais','socios_decisores','fonte','url_fonte','site'];for(const r of rows){r.whatsapp=r.whatsappSite||'';r.redes=r.socials?Object.values(r.socials).filter(Boolean).join(' '):''}for(const r of rows)r.socios=Array.isArray(r.partners)?r.partners.filter(p=>p.decisor).concat(r.partners.filter(p=>!p.decisor)).slice(0,5).map(p=>titleCase(p.nome)+' ('+p.cargo+')').join(', '):'';const csv='\uFEFF'+[labels.join(';'),...rows.map(r=>keys.map(k=>csvCell(r[k])).join(';'))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='prospectas-yuri-guimaraes-contatos.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
+
+(function(){const area=document.getElementById('wa-template');if(!area)return;area.value=waTemplate();const fb=document.getElementById('wa-template-status');
+area.addEventListener('input',()=>{try{localStorage.setItem(WA_TEMPLATE_KEY,area.value.trim()||WA_TEMPLATE_DEFAULT);fb.textContent='Salvo neste navegador ✓'}catch{fb.textContent='Não foi possível salvar neste navegador'}});
+document.getElementById('wa-template-reset').addEventListener('click',()=>{area.value=WA_TEMPLATE_DEFAULT;try{localStorage.removeItem(WA_TEMPLATE_KEY)}catch{}fb.textContent='Mensagem padrão restaurada';});
+document.getElementById('wa-template-preview').textContent=fillTemplate(waTemplate(),{name:'Clínica Exemplo',city:'Porto Alegre',category:'Dentista'});
+area.addEventListener('input',()=>{document.getElementById('wa-template-preview').textContent=fillTemplate(area.value||WA_TEMPLATE_DEFAULT,{name:'Clínica Exemplo',city:'Porto Alegre',category:'Dentista'})});})();
