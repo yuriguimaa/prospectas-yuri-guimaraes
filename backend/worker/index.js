@@ -287,13 +287,44 @@ async function mapsViaTreg(env,user,url){
   if(q.length<2||(uf&&!Object.hasOwn(ufCodes,uf)))return json({error:'Informe o que procurar (ex.: clínica odontológica) e a região'},400);
   if(offset===0){const limited=rateLimit(user.id,'maps',30);if(limited)return limited}
   const location=[city,uf,'Brasil'].filter(Boolean).join(', ');
-  const data=await cached('treg-maps:'+q+'|'+location,86400,async()=>{
-    const res=await fetchReliable('https://treg.to/call/crawl4ai.google.serp.maps',{method:'POST',headers:{'content-type':'application/json','X-Treg-Token':String(env.TREG_TOKEN).trim()},body:JSON.stringify({query:q,location,limit:60})});
-    if(!res.ok){const t=await res.text();console.log(JSON.stringify({event:'treg_maps_error',status:res.status,detail:t.slice(0,300)}));return {error:res.status}}
-    const body=await res.json();
-    return {rows:Array.isArray(body.rows)?body.rows:[],cost:res.headers.get('x-treg-cost-micro')||''};
+  const headers={'content-type':'application/json','X-Treg-Token':String(env.TREG_TOKEN).trim()};
+  if(env.TREG_ORG)headers['X-Treg-Org']=String(env.TREG_ORG).trim();
+  let failure=null;
+  // Erros nunca entram no cache: o producer devolve null e o motivo fica em `failure`.
+  const data=await cached('treg-maps2:'+q+'|'+location,86400,async()=>{
+    const attempt=async(endpoint,body,parse)=>{
+      const res=await fetchReliable('https://treg.to/call/'+endpoint,{method:'POST',headers,body:JSON.stringify(body)});
+      if(!res.ok){
+        const t=(await res.text()).slice(0,400);
+        let detail=t;try{const j=JSON.parse(t);detail=j.detail||j.error||j.message||j.msg||t;if(typeof detail==='object')detail=JSON.stringify(detail)}catch{}
+        failure={status:res.status,detail:String(detail).slice(0,200),endpoint,whose:res.headers.get('x-treg-whose-error')||''};
+        console.log(JSON.stringify({event:'treg_maps_error',...failure}));
+        return null;
+      }
+      const rows=parse(await res.json());
+      return rows&&rows.length?rows:[];
+    };
+    // 1) crawl4ai (US$ 0,00015, até 60 lugares)
+    let rows=await attempt('crawl4ai.google.serp.maps',{query:q,location,limit:60},b=>Array.isArray(b.rows)?b.rows:[]);
+    // 2) reserva: Serper (US$ 0,003, 20 lugares) se a 1ª falhou por algo que não seja chave/saldo
+    if((rows===null&&failure&&![401,402].includes(failure.status))||(rows&&!rows.length)){
+      const r2=await attempt('serper.google.serp.maps',{q:q+' em '+[city,uf].filter(Boolean).join(' '),hl:'pt-br'},b=>(Array.isArray(b.places)?b.places:[]).map(p=>({name:p.title,category:p.type||(p.types||[])[0]||'',address:p.address||'',phone:p.phoneNumber||'',website:p.website||'',rating:p.rating||null,review_count:p.ratingCount||0,place_id:p.placeId||p.cid||p.title,url:p.cid?'https://www.google.com/maps?cid='+p.cid:''})));
+      if(r2&&r2.length){rows=r2;failure=null}
+      else if(rows===null&&r2===null){}
+      else if(rows===null)rows=r2;
+    }
+    if(rows===null)return null;
+    return {rows};
   });
-  if(!data||data.error){const st=data&&data.error;return json({error:st===401||st===403?'Chave do treg inválida ou sem permissão':st===402?'Saldo do treg esgotado. Recarregue em treg.to.':st===429?'Muitas buscas seguidas no treg. Tente em 1 minuto.':'Busca no Google Maps indisponível no momento'},st===402?402:st===429?429:502)}
+  if(!data){
+    const st=failure?failure.status:502,detail=failure&&failure.detail?' ('+failure.detail+')':'';
+    const msg=st===401?'O treg recusou a chave (401). Confira o TREG_TOKEN no Cloudflare'+detail:
+      st===402?'Saldo do treg esgotado. Recarregue em treg.to'+detail:
+      st===403?'O treg negou o acesso (403)'+detail:
+      st===429?'Muitas buscas seguidas no treg. Tente em 1 minuto'+detail:
+      'Busca no Google Maps indisponível no momento'+detail;
+    return json({error:msg,code:'treg_'+st},st===402?402:st===429?429:502);
+  }
   const places=data.rows.map(r=>{
     const m=String(r.address||'').match(/,\s*([^,]+?)\s*-\s*([A-Z]{2}),\s*\d{5}-?\d{3}/);
     return {id:r.place_id||r.cid||r.name,name:r.name||'',category:r.category||'',address:String(r.address||'').replace(/,\s*(Brazil|Brasil)$/,''),city:m?m[1]:'',uf:m?m[2]:'',phone:nationalPhone(r.phone),site:r.website||'',rating:r.rating||null,reviews:r.review_count||0,mapsUrl:r.url||'',temporarilyClosed:false};
@@ -438,12 +469,13 @@ export default {
       const limited=rateLimit(user.id,'maps',30);if(limited)return cors(request,limited);
       const textQuery=[q,city&&('em '+city),uf].filter(Boolean).join(' ')+', Brasil';
       const fields=['places.id','places.displayName','places.formattedAddress','places.addressComponents','places.nationalPhoneNumber','places.internationalPhoneNumber','places.websiteUri','places.rating','places.userRatingCount','places.googleMapsUri','places.businessStatus','places.primaryTypeDisplayName','nextPageToken'].join(',');
+      let gFail=502;
       const data=await cached('maps:'+textQuery+':'+pageToken,86400,async()=>{
         const res=await fetchReliable('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'content-type':'application/json','X-Goog-Api-Key':String(env.GOOGLE_MAPS_API_KEY).trim(),'X-Goog-FieldMask':fields},body:JSON.stringify({textQuery,languageCode:'pt-BR',regionCode:'BR',pageSize:20,...(pageToken?{pageToken}:{})})});
-        if(!res.ok){const t=await res.text();console.log(JSON.stringify({event:'maps_error',status:res.status,detail:t.slice(0,300)}));return {error:res.status}}
+        if(!res.ok){const t=await res.text();console.log(JSON.stringify({event:'maps_error',status:res.status,detail:t.slice(0,300)}));gFail=res.status;return null}
         return await res.json();
       });
-      if(!data||data.error){const st=data&&data.error;return cors(request,json({error:st===403?'Chave do Google Maps sem permissão para a Places API':st===429?'Limite do Google Maps atingido. Tente mais tarde.':'Google Maps indisponível no momento'},st===429?429:502))}
+      if(!data||data.error){const st=data?data.error:gFail;return cors(request,json({error:st===403?'Chave do Google Maps sem permissão para a Places API':st===429?'Limite do Google Maps atingido. Tente mais tarde.':'Google Maps indisponível no momento'},st===429?429:502))}
       const comp=(p,type)=>{const c=(p.addressComponents||[]).find(c=>(c.types||[]).includes(type));return c?(type==='administrative_area_level_1'?c.shortText:c.longText):''};
       const places=(data.places||[]).filter(p=>p.businessStatus!=='CLOSED_PERMANENTLY').map(p=>({id:p.id,name:p.displayName&&p.displayName.text||'',category:p.primaryTypeDisplayName&&p.primaryTypeDisplayName.text||'',address:p.formattedAddress||'',city:comp(p,'administrative_area_level_2'),uf:comp(p,'administrative_area_level_1'),phone:p.nationalPhoneNumber||'',site:p.websiteUri||'',rating:p.rating||null,reviews:p.userRatingCount||0,mapsUrl:p.googleMapsUri||'',temporarilyClosed:p.businessStatus==='CLOSED_TEMPORARILY'}));
       return cors(request,json({places,nextPage:data.nextPageToken||''}));
