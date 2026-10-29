@@ -292,8 +292,12 @@ async function mapsViaTreg(env,user,url){
   let failure=null;
   // Erros nunca entram no cache: o producer devolve null e o motivo fica em `failure`.
   const data=await cached('treg-maps2:'+q+'|'+location,86400,async()=>{
-    const attempt=async(endpoint,body,parse)=>{
-      const res=await fetchReliable('https://treg.to/call/'+endpoint,{method:'POST',headers,body:JSON.stringify(body)});
+    const attempt=async(endpoint,body,parse,timeoutMs)=>{
+      // Uma tentativa só, com tempo maior: buscas novas no Maps podem levar 15–25 s,
+      // e repetir por tempo esgotado só dobraria a espera.
+      let res;
+      try{res=await fetch('https://treg.to/call/'+endpoint,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(timeoutMs)})}
+      catch(e){failure={status:504,detail:'o fornecedor demorou mais de '+Math.round(timeoutMs/1000)+' s',endpoint};console.log(JSON.stringify({event:'treg_maps_timeout',endpoint}));return null}
       if(!res.ok){
         const t=(await res.text()).slice(0,400);
         let detail=t;try{const j=JSON.parse(t);detail=j.detail||j.error||j.message||j.msg||t;if(typeof detail==='object')detail=JSON.stringify(detail)}catch{}
@@ -305,10 +309,10 @@ async function mapsViaTreg(env,user,url){
       return rows&&rows.length?rows:[];
     };
     // 1) crawl4ai (US$ 0,00015, até 60 lugares)
-    let rows=await attempt('crawl4ai.google.serp.maps',{query:q,location,limit:60},b=>Array.isArray(b.rows)?b.rows:[]);
+    let rows=await attempt('crawl4ai.google.serp.maps',{query:q,location,limit:60},b=>Array.isArray(b.rows)?b.rows:[],25000);
     // 2) reserva: Serper (US$ 0,003, 20 lugares) se a 1ª falhou por algo que não seja chave/saldo
     if((rows===null&&failure&&![401,402].includes(failure.status))||(rows&&!rows.length)){
-      const r2=await attempt('serper.google.serp.maps',{q:q+' em '+[city,uf].filter(Boolean).join(' '),hl:'pt-br'},b=>(Array.isArray(b.places)?b.places:[]).map(p=>({name:p.title,category:p.type||(p.types||[])[0]||'',address:p.address||'',phone:p.phoneNumber||'',website:p.website||'',rating:p.rating||null,review_count:p.ratingCount||0,place_id:p.placeId||p.cid||p.title,url:p.cid?'https://www.google.com/maps?cid='+p.cid:''})));
+      const r2=await attempt('serper.google.serp.maps',{q:q+' em '+[city,uf].filter(Boolean).join(' '),hl:'pt-br'},b=>(Array.isArray(b.places)?b.places:[]).map(p=>({name:p.title,category:p.type||(p.types||[])[0]||'',address:p.address||'',phone:p.phoneNumber||'',website:p.website||'',rating:p.rating||null,review_count:p.ratingCount||0,place_id:p.placeId||p.cid||p.title,url:p.cid?'https://www.google.com/maps?cid='+p.cid:''})),12000);
       if(r2&&r2.length){rows=r2;failure=null}
       else if(rows===null&&r2===null){}
       else if(rows===null)rows=r2;
@@ -322,6 +326,7 @@ async function mapsViaTreg(env,user,url){
       st===402?'Saldo do treg esgotado. Recarregue em treg.to'+detail:
       st===403?'O treg negou o acesso (403)'+detail:
       st===429?'Muitas buscas seguidas no treg. Tente em 1 minuto'+detail:
+      st===504?'A busca no Google Maps demorou demais. Tente de novo em instantes'+detail:
       'Busca no Google Maps indisponível no momento'+detail;
     return json({error:msg,code:'treg_'+st},st===402?402:st===429?429:502);
   }
