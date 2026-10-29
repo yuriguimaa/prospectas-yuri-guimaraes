@@ -394,7 +394,7 @@ async function searchMaps(){
   if(q.length<2){$('maps-q').focus();return}
   const token=state.mapsTokens?.[state.page]||'';
   const p=new URLSearchParams({q});const uf=$('maps-uf').value,city=$('maps-city').value.trim();if(uf)p.set('uf',uf);if(city)p.set('cidade',city);if(token)p.set('page',token);
-  setStatus('Buscando no Google Maps','Procurando "'+q+'"'+(city||uf?' em '+[city,uf].filter(Boolean).join(', '):'')+'.','loading');$('maps-btn').disabled=true;
+  setStatus('Buscando no Google Maps','Procurando "'+q+'"'+(city||uf?' em '+[city,uf].filter(Boolean).join(', '):'')+'. Buscas novas podem levar até 30 segundos; as repetidas voltam na hora.','loading');$('maps-btn').disabled=true;
   document.getElementById('results-title').scrollIntoView({behavior:'smooth',block:'start'});
   try{
     const res=await api('/api/maps?'+p,{headers:{Accept:'application/json'}});const data=await res.json().catch(()=>({}));
