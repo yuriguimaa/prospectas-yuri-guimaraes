@@ -100,7 +100,8 @@ async function auth(request,env,url){
     if(!refreshToken)return cors(request,json({error:'Sessão expirada'},400));
     try{
       const upstream=await fetch(String(env.SUPABASE_URL).replace(/\/$/,'')+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:String(env.SUPABASE_SECRET_KEY).trim(),'content-type':'application/json'},body:JSON.stringify({refresh_token:refreshToken}),signal:AbortSignal.timeout(12000)});
-      return cors(request,response(await upstream.text(),'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
+      const text=await upstream.text();const down=upstreamDown(text,upstream.status);if(down)return cors(request,down);
+      return cors(request,response(text,'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
     }catch{return cors(request,json({error:'Não foi possível renovar a sessão'},502))}
   }
   const email=clean(data.email,180).toLowerCase(),password=String(data.password||'');
@@ -110,8 +111,9 @@ async function auth(request,env,url){
   const body=endpoint==='/signup'?{email,password,options:{emailRedirectTo:new URL(request.url).origin+'/app/'}}:{email,password};
   try{
     const upstream=await fetch(base+endpoint,{method:'POST',headers:{apikey:String(env.SUPABASE_SECRET_KEY).trim(),'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});
-    return cors(request,response(await upstream.text(),'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
-  }catch{return cors(request,json({error:'Não foi possível concluir o acesso. Tente novamente.'},502))}
+    const text=await upstream.text();const down=upstreamDown(text,upstream.status);if(down)return cors(request,down);
+    return cors(request,response(text,'application/json; charset=utf-8',upstream.status,{'cache-control':'no-store'}));
+  }catch{return cors(request,json({error:'O banco de dados não respondeu. Tente de novo em alguns minutos.',code:'db_unavailable'},503))}
 }
 async function fetchReliable(url,options){
   for(let attempt=0;attempt<2;attempt++){
@@ -418,7 +420,23 @@ async function siteContacts(rawUrl){
     return {site:url.href,emails,...social,whatsapp:extractWhatsapp(home)||extractWhatsapp(pagesHtml),checked:home?(pagesHtml?4:1):0};
   })};
 }
+
+// Mantém o projeto gratuito do Supabase acordado (ele pausa após 7 dias sem uso).
+async function keepSupabaseAwake(env){
+  if(!env.SUPABASE_URL||!env.SUPABASE_SECRET_KEY)return;
+  const key=String(env.SUPABASE_SECRET_KEY).trim();
+  try{
+    const res=await fetch(String(env.SUPABASE_URL).replace(/\/$/,'')+'/rest/v1/saved_leads?select=record_key&limit=1',{headers:{apikey:key,authorization:'Bearer '+key},signal:AbortSignal.timeout(15000)});
+    console.log(JSON.stringify({event:'supabase_keepalive',status:res.status}));
+  }catch(e){console.log(JSON.stringify({event:'supabase_keepalive_error',detail:String(e).slice(0,200)}))}
+}
+function upstreamDown(text,status){
+  const t=String(text||'');
+  if(status>=500||/^error code: \d+/i.test(t.trim()))return json({error:'O banco de dados está temporariamente indisponível. Tente de novo em alguns minutos.',code:'db_unavailable'},503);
+  return null;
+}
 export default {
+  async scheduled(event,env,ctx){ctx.waitUntil(keepSupabaseAwake(env))},
   async fetch(request,env={}) {
     const url = new URL(request.url);
     if(url.pathname.startsWith('/api/auth/'))return auth(request,env,url);

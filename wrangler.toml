@@ -15,5 +15,9 @@ directory = "./data/assets"
 binding = "ASSETS"
 run_worker_first = true
 
+# Todo dia às 09:00 (UTC) dá um sinal de vida no Supabase para o projeto gratuito não ser pausado.
+[triggers]
+crons = ["0 9 * * *"]
+
 [build]
 command = "node scripts/build.mjs --same-origin"
